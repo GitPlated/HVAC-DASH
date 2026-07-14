@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Refrigeration Daily Rounds — Facility Dashboard</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-header-title">
+    <h1>Refrigeration Daily Rounds</h1>
+    <span class="app-header-sub">Facility Dashboard</span>
+  </div>
+  <div class="header-actions">
+    <div class="view-tabs" role="tablist" aria-label="Dashboard view">
+      <button type="button" class="view-tab is-active" id="tab-floor" role="tab" aria-selected="true">Floor Plan</button>
+      <button type="button" class="view-tab" id="tab-roof" role="tab" aria-selected="false">Roof Level</button>
+    </div>
+    <button type="button" class="btn btn-danger" id="btn-reset">Reset all entries</button>
+  </div>
+</header>
+
+<div class="legend-bar">
+  <div class="legend-group">
+    <span class="legend-group-label">Room Type</span>
+    <div class="legend-items" id="legend-category"></div>
+  </div>
+  <div class="legend-group">
+    <span class="legend-group-label">Status</span>
+    <div class="legend-items" id="legend-status"></div>
+  </div>
+</div>
+
+<main>
+  <section class="view-section is-active" id="view-floor">
+    <div class="map-wrap">
+      <svg id="floor-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <p class="hint-text">Click any marker to open its checklist. Dashed rings mark an assumed equipment location — confirm on-site.</p>
+  </section>
+
+  <section class="view-section" id="view-roof">
+    <p class="hint-text">Roof-mounted equipment isn't on the interior floor plan. Click a card to open its checklist.</p>
+    <div class="roof-grid" id="roof-grid"></div>
+  </section>
+</main>
+
+<footer class="app-footer">
+  <span>Data saved to this browser only — not shared across devices.</span>
+</footer>
+
+<div class="backdrop" id="backdrop"></div>
+
+<aside class="slide-over" id="slide-over" aria-hidden="true">
+  <div class="slide-over-head">
+    <div class="slide-over-titles">
+      <h2 id="panel-title"></h2>
+      <span id="panel-subtitle" class="slide-over-subtitle"></span>
+    </div>
+    <button type="button" class="btn-icon" id="panel-close" aria-label="Close panel">
+      <svg viewBox="0 0 20 20" width="18" height="18"><path d="M4 4l12 12M16 4L4 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+    </button>
+  </div>
+  <div class="slide-over-body" id="panel-body"></div>
+</aside>
+
+<script src="js/rooms.js"></script>
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
