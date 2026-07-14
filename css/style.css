@@ -178,6 +178,11 @@ button, input, select {
   background: var(--bg-panel-raised);
 }
 
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ------------------------------------------------------------ load banner */
 .load-error-banner {
   display: flex;
@@ -579,6 +584,22 @@ main {
   color: var(--ink-muted);
 }
 
+.notes-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.notes-row .notes-input {
+  flex: 1;
+}
+
+.notes-save-btn {
+  flex: none;
+  padding: 7px 12px;
+  font-size: 0.78rem;
+}
+
 .units-list {
   display: flex;
   flex-direction: column;
@@ -917,8 +938,32 @@ button.finding-indicator {
 .log-row {
   display: flex;
   gap: 14px;
-  padding: 10px 0;
+  padding: 10px 10px 10px 11px;
   border-bottom: 1px solid var(--grid-line);
+  border-left: 3px solid transparent;
+}
+
+/* Issue-flagged rows (an "Attention" reading, or any finding_update — even a
+   resolved one, since it's still part of an issue's history) get a colored
+   left accent + tinted background so they pop out of the scrolling feed at a
+   glance. Always paired with the row's own status icon — never color-only. */
+.log-row-issue-active {
+  border-left-color: var(--status-critical);
+  background: rgba(208, 59, 59, 0.08);
+}
+
+.log-row-issue-resolved {
+  border-left-color: var(--status-resolved);
+  background: rgba(46, 143, 143, 0.08);
+}
+
+.log-row-issue-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  vertical-align: middle;
+  position: relative;
+  top: 2px;
 }
 
 .log-row-time {
@@ -995,6 +1040,60 @@ button.finding-indicator {
 .finding-card-meta {
   font-size: 0.78rem;
   color: var(--ink-secondary);
+}
+
+/* ------------------------------------------------------------ overview page */
+.overview-wrap {
+  display: flex;
+  gap: 32px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.overview-stack-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  max-height: 74vh;
+  overflow-y: auto;
+  flex: none;
+}
+
+.unit-histogram {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 60px;
+}
+
+.unit-block {
+  height: 12px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.unit-block-red { background: var(--status-critical); }
+.unit-block-grey { background: var(--status-notchecked); }
+.unit-block-green { background: var(--status-good); }
+
+.overview-side {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 240px;
+  padding-top: 4px;
+}
+
+.overview-counts {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.overview-side .legend-items {
+  flex-direction: column;
+  gap: 10px;
 }
 
 /* ------------------------------------------------------------ empty state */

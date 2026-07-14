@@ -216,16 +216,6 @@ function checkpointHasResolvedFinding(checkpointId) {
   return FINDINGS_LIST.some(function (f) { return f.checkpoint_id === checkpointId && f.status === "resolved"; });
 }
 
-function debounce(fn, delay) {
-  let t;
-  return function () {
-    const args = arguments;
-    const ctx = this;
-    clearTimeout(t);
-    t = setTimeout(function () { fn.apply(ctx, args); }, delay);
-  };
-}
-
 // -------------------------------------------------------------- aggregate
 /*
  * Aggregate status for a checkpoint's marker / card color:
@@ -762,24 +752,52 @@ function buildCheckRow(checkpoint, checklistItem) {
   head.appendChild(segmented);
   row.appendChild(head);
 
+  const notesRow = document.createElement("div");
+  notesRow.className = "notes-row";
+
   const notesInput = document.createElement("input");
   notesInput.type = "text";
   notesInput.className = "notes-input";
   notesInput.placeholder = "Notes / actual reading";
   notesInput.value = current.notes || "";
-  const saveNotes = debounce(function () {
+
+  // Notes only persist on an explicit Save click now (no more debounce-on-
+  // input) — lastSavedNotes tracks what's actually in the database so the
+  // button is only enabled when there's something new to save, and reopening
+  // this row later always shows the last SAVED value, never an abandoned draft.
+  let lastSavedNotes = current.notes || "";
+
+  const notesSaveBtn = document.createElement("button");
+  notesSaveBtn.type = "button";
+  notesSaveBtn.className = "btn notes-save-btn";
+  notesSaveBtn.textContent = "Save";
+  notesSaveBtn.disabled = true;
+
+  notesInput.addEventListener("input", function () {
+    notesSaveBtn.disabled = (notesInput.value === lastSavedNotes);
+  });
+
+  notesSaveBtn.addEventListener("click", function () {
     const stateNow = (getGroupEntries(checkpoint.id)[itemKey] || {}).state || "not_checked";
-    setGroupEntryLocal(checkpoint.id, itemKey, stateNow, notesInput.value);
+    const notesVal = notesInput.value;
     saveError.hidden = true;
-    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, stateNow, null, notesInput.value)
-      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
+    notesSaveBtn.disabled = true;
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, stateNow, null, notesVal)
+      .then(function (logRow) {
+        if (logRow) LOG_ROWS.push(logRow);
+        setGroupEntryLocal(checkpoint.id, itemKey, stateNow, notesVal);
+        lastSavedNotes = notesVal;
+      })
       .catch(function (err) {
         console.error("Failed to save checklist notes to Supabase:", checkpoint.id, itemKey, err);
         saveError.hidden = false;
+        notesSaveBtn.disabled = (notesInput.value === lastSavedNotes);
       });
-  }, 400);
-  notesInput.addEventListener("input", saveNotes);
-  row.appendChild(notesInput);
+  });
+
+  notesRow.appendChild(notesInput);
+  notesRow.appendChild(notesSaveBtn);
+  row.appendChild(notesRow);
   row.appendChild(saveError);
 
   const findingArea = document.createElement("div");
@@ -804,6 +822,11 @@ function buildCheckRow(checkpoint, checklistItem) {
               if (alsoLogToggle) {
                 segmented.setActive("attention");
                 setGroupEntryLocal(checkpoint.id, itemKey, "attention", notesInput.value);
+                // This path also just persisted notesInput.value to the log
+                // (see saveFindingUpdate) — keep the Save button's notion of
+                // "last saved" in sync so it doesn't stay wrongly enabled.
+                lastSavedNotes = notesInput.value;
+                notesSaveBtn.disabled = true;
               }
               // Always refresh markers/roof cards — a finding's resolution
               // status (and thus the pulsating active-issue indicator) can
@@ -941,19 +964,41 @@ function buildSubRow(checkpoint, sub) {
   notesInput.className = "notes-input sub-notes-input";
   notesInput.placeholder = "Notes";
   notesInput.value = stored.notes || "";
-  const saveSubNotes = debounce(function () {
+
+  // See the matching comment in buildCheckRow() — notes only persist on an
+  // explicit Save click now.
+  let lastSavedNotes = stored.notes || "";
+
+  const notesSaveBtn = document.createElement("button");
+  notesSaveBtn.type = "button";
+  notesSaveBtn.className = "btn notes-save-btn";
+  notesSaveBtn.textContent = "Save";
+  notesSaveBtn.disabled = true;
+
+  notesInput.addEventListener("input", function () {
+    notesSaveBtn.disabled = (notesInput.value === lastSavedNotes);
+  });
+
+  notesSaveBtn.addEventListener("click", function () {
     const existingOil = getSubEntry(checkpoint.id, sub.designation).oilLevel;
-    setSubEntryLocal(checkpoint.id, sub.designation, existingOil, notesInput.value);
+    const notesVal = notesInput.value;
     saveError.hidden = true;
-    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(existingOil), notesInput.value)
-      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
+    notesSaveBtn.disabled = true;
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(existingOil), notesVal)
+      .then(function (logRow) {
+        if (logRow) LOG_ROWS.push(logRow);
+        setSubEntryLocal(checkpoint.id, sub.designation, existingOil, notesVal);
+        lastSavedNotes = notesVal;
+      })
       .catch(function (err) {
         console.error("Failed to save compressor notes to Supabase:", checkpoint.id, sub.designation, err);
         saveError.hidden = false;
+        notesSaveBtn.disabled = (notesInput.value === lastSavedNotes);
       });
-  }, 400);
-  notesInput.addEventListener("input", saveSubNotes);
+  });
+
   controls.appendChild(notesInput);
+  controls.appendChild(notesSaveBtn);
 
   row.appendChild(controls);
   row.appendChild(saveError);
@@ -1077,10 +1122,29 @@ function buildMergedDailyEntries() {
   return entries;
 }
 
+// An entry "pops out" of the daily feed when it represents an issue: a raw
+// "Attention" reading, or ANY finding_update (even a "resolved" one — it's
+// still part of an issue's history, unlike a plain OK/not_checked/oil-level
+// row). Returns null for routine entries, which keep the plain row style.
+function issueMetaForLogEntry(entry) {
+  if (entry.kind === "log" && entry.status === "attention") {
+    return { level: "active", icon: "attention" };
+  }
+  if (entry.kind === "finding_update") {
+    return entry.status === "resolved"
+      ? { level: "resolved", icon: "resolved_issue" }
+      : { level: "active", icon: "active_issue" };
+  }
+  return null;
+}
+
 function buildDailyLogRow(entry) {
   const cp = EQUIPMENT_BY_ID[entry.checkpointId];
+  const issueMeta = issueMetaForLogEntry(entry);
+
   const row = document.createElement("div");
   row.className = "log-row";
+  if (issueMeta) row.classList.add("log-row-issue-" + issueMeta.level);
 
   const timeEl = document.createElement("div");
   timeEl.className = "log-row-time";
@@ -1092,9 +1156,18 @@ function buildDailyLogRow(entry) {
 
   const eqLine = document.createElement("div");
   eqLine.className = "log-row-equipment";
-  eqLine.textContent = cp
+  if (issueMeta) {
+    // Color is never the only signal — pair the accent with the same status
+    // icon glyph used elsewhere in the app (finding badges, markers, legend).
+    const iconWrap = document.createElement("span");
+    iconWrap.className = "log-row-issue-icon";
+    iconWrap.style.color = issueMeta.level === "resolved" ? "var(--status-resolved)" : "var(--status-critical)";
+    iconWrap.innerHTML = iconHTML(issueMeta.icon, 14);
+    eqLine.appendChild(iconWrap);
+  }
+  eqLine.appendChild(document.createTextNode(cp
     ? (cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "") + " — " + cp.location)
-    : entry.checkpointId;
+    : entry.checkpointId));
   mainEl.appendChild(eqLine);
 
   const itemLine = document.createElement("div");
@@ -1241,8 +1314,93 @@ function wireFindingsControls() {
   });
 }
 
+// -------------------------------------------------------------- overview page
+// One unit block per checkable item in the whole facility: every groupChecklist
+// entry across every EQUIPMENT_GROUPS checkpoint (floor + roof), plus every
+// rack compressor subsection (oil level). Classified into exactly 3 buckets —
+// see the in-line rules below — and always recomputed live from CACHE/
+// FINDINGS_BY_ITEM, never hardcoded.
+function computeOverviewCounts() {
+  let grey = 0, green = 0, red = 0;
+
+  EQUIPMENT_GROUPS.forEach(function (cp) {
+    const groupData = getGroupEntries(cp.id);
+    (cp.groupChecklist || []).forEach(function (ci) {
+      const entry = groupData[ci.item];
+      const state = entry ? entry.state : "not_checked";
+      const info = getItemFindingInfo(cp.id, ci.item);
+      const hasAnyFinding = info.all && info.all.length > 0;
+      // Red (any finding, resolved or not) takes precedence over green/grey —
+      // this histogram answers "how many things needed attention", not just
+      // "what's currently on fire".
+      if (hasAnyFinding) red++;
+      else if (state === "ok") green++;
+      else grey++; // not_checked, or never logged at all
+    });
+    (cp.subsections || []).forEach(function (s) {
+      // Subsections (compressor oil level) never have a findings concept —
+      // any recorded reading at all is green, otherwise grey.
+      const sub = getSubEntry(cp.id, s.designation);
+      if (sub.oilLevel) green++;
+      else grey++;
+    });
+  });
+
+  return { grey: grey, green: green, red: red, total: grey + green + red };
+}
+
+function renderOverviewView() {
+  const stackEl = document.getElementById("unit-histogram");
+  const countsEl = document.getElementById("overview-counts");
+  const legendEl = document.getElementById("overview-legend");
+  if (!stackEl || !countsEl || !legendEl) return;
+
+  const counts = computeOverviewCounts();
+
+  stackEl.innerHTML = "";
+  stackEl.setAttribute("role", "img");
+  stackEl.setAttribute("aria-label",
+    counts.red + " items resulted in a finding, " + counts.grey + " not checked, " +
+    counts.green + " checked OK, out of " + counts.total + " total.");
+
+  function addBlocks(n, cssClass) {
+    for (let i = 0; i < n; i++) {
+      const b = document.createElement("div");
+      b.className = "unit-block " + cssClass;
+      stackEl.appendChild(b);
+    }
+  }
+  // Findings first so problems are never visually buried at the bottom of
+  // the stack, then not-checked, then OK.
+  addBlocks(counts.red, "unit-block-red");
+  addBlocks(counts.grey, "unit-block-grey");
+  addBlocks(counts.green, "unit-block-green");
+
+  countsEl.textContent = counts.green + " OK · " + counts.grey + " not checked · " +
+    counts.red + " finding" + (counts.red === 1 ? "" : "s") + " — " + counts.total + " total";
+
+  legendEl.innerHTML = "";
+  [
+    { status: "active_issue", color: "var(--status-critical)", label: "Resulted in a finding" },
+    { status: "not_checked", color: "var(--status-notchecked)", label: "Not checked" },
+    { status: "ok", color: "var(--status-good)", label: "Checked — OK" }
+  ].forEach(function (row) {
+    const item = document.createElement("span");
+    item.className = "legend-item";
+    const iconWrap = document.createElement("span");
+    iconWrap.className = "legend-icon";
+    iconWrap.style.color = row.color;
+    iconWrap.innerHTML = iconHTML(row.status, 16);
+    const lbl = document.createElement("span");
+    lbl.textContent = row.label;
+    item.appendChild(iconWrap);
+    item.appendChild(lbl);
+    legendEl.appendChild(item);
+  });
+}
+
 // -------------------------------------------------------------- header / tabs
-const TAB_IDS = ["floor", "roof", "log", "findings"];
+const TAB_IDS = ["floor", "roof", "log", "findings", "overview"];
 
 function switchTab(which) {
   TAB_IDS.forEach(function (id) {
@@ -1253,6 +1411,7 @@ function switchTab(which) {
   });
   if (which === "log") renderDailyLogView();
   if (which === "findings") renderFindingsView();
+  if (which === "overview") renderOverviewView();
 }
 
 function wireHeaderControls() {
@@ -1270,6 +1429,7 @@ function wireHeaderControls() {
         refreshStatusesUI();
         renderDailyLogView();
         renderFindingsView();
+        renderOverviewView();
       })
       .catch(function (err) {
         console.error("ChecklistStore.resetAll failed:", err);
@@ -1333,6 +1493,7 @@ async function init() {
     refreshStatusesUI();
     renderDailyLogView();
     renderFindingsView();
+    renderOverviewView();
   }
 }
 

@@ -20,6 +20,7 @@
       <button type="button" class="view-tab" id="tab-roof" role="tab" aria-selected="false">Roof Level</button>
       <button type="button" class="view-tab" id="tab-log" role="tab" aria-selected="false">Daily Log</button>
       <button type="button" class="view-tab" id="tab-findings" role="tab" aria-selected="false">Findings</button>
+      <button type="button" class="view-tab" id="tab-overview" role="tab" aria-selected="false">Overview</button>
     </div>
     <button type="button" class="btn btn-danger" id="btn-reset">Reset all entries</button>
   </div>
@@ -75,6 +76,19 @@
       </div>
     </div>
     <div class="findings-list" id="findings-list"></div>
+  </section>
+
+  <section class="view-section" id="view-overview">
+    <p class="hint-text">Every checkable item across the whole facility, one block per item. Grouped so open findings are never buried at the bottom.</p>
+    <div class="overview-wrap">
+      <div class="overview-stack-panel">
+        <div class="unit-histogram" id="unit-histogram"></div>
+      </div>
+      <div class="overview-side">
+        <div class="overview-counts" id="overview-counts"></div>
+        <div class="legend-items" id="overview-legend"></div>
+      </div>
+    </div>
   </section>
 </main>
 
