@@ -1,11 +1,21 @@
 /*
  * app.js — renders the floor plan / roof panel from ROOMS + EQUIPMENT_GROUPS
- * and manages the localStorage-backed checklist state. Plain script, no
- * modules, no build step — relies on rooms.js and data.js having already
+ * and manages checklist state backed by Supabase (via window.ChecklistStore,
+ * defined in js/supabase-client.js). Plain script, no modules, no build
+ * step — relies on rooms.js, data.js, and supabase-client.js having already
  * defined their globals before this file runs.
+ *
+ * All checklist reads/writes go through an in-memory CACHE that mirrors the
+ * shape this file used to reconstruct from localStorage, so the
+ * rendering/status-computation functions below barely had to change:
+ *   CACHE.group[checkpointId][itemName]  -> { state, notes }
+ *   CACHE.sub[checkpointId][designation] -> { oilLevel, notes }
+ * CACHE is populated once on startup from ChecklistStore.loadAll(), and kept
+ * in sync optimistically on every user edit — the same edit also fires an
+ * async write to Supabase in the background. A failed background write is
+ * logged to the console; it does not roll back the optimistic UI state (the
+ * next full page load's loadAll() is the real source of truth).
  */
-
-const LS_PREFIX = "hvac-dash:v1:";
 
 // Fixed, non-themed colors. Kept in sync by hand with the CSS custom
 // properties of the same name in css/style.css — these never change between
@@ -55,30 +65,61 @@ function iconHTML(status, size) {
 }
 
 // ---------------------------------------------------------------- storage
-function lsGetGroup(id) {
-  try {
-    const raw = localStorage.getItem(LS_PREFIX + id);
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) {
-    return {};
-  }
+// In-memory cache of checklist entries. Populated by ingestRows() after
+// ChecklistStore.loadAll() resolves, and updated optimistically by the
+// setGroupEntryLocal/setSubEntryLocal helpers whenever the user edits
+// something (see buildCheckRow / buildSubRow below).
+const CACHE = { group: {}, sub: {} };
+
+function getGroupEntries(checkpointId) {
+  return CACHE.group[checkpointId] || {};
 }
 
-function lsSetGroup(id, obj) {
-  localStorage.setItem(LS_PREFIX + id, JSON.stringify(obj));
+function getSubEntry(checkpointId, designation) {
+  return (CACHE.sub[checkpointId] && CACHE.sub[checkpointId][designation]) || { oilLevel: "", notes: "" };
 }
 
-function lsGetSub(id, designation) {
-  try {
-    const raw = localStorage.getItem(LS_PREFIX + id + ":sub:" + designation);
-    return raw ? JSON.parse(raw) : { oilLevel: "", notes: "" };
-  } catch (e) {
-    return { oilLevel: "", notes: "" };
-  }
+function setGroupEntryLocal(checkpointId, itemKey, state, notes) {
+  if (!CACHE.group[checkpointId]) CACHE.group[checkpointId] = {};
+  CACHE.group[checkpointId][itemKey] = { state: state, notes: notes || "" };
 }
 
-function lsSetSub(id, designation, obj) {
-  localStorage.setItem(LS_PREFIX + id + ":sub:" + designation, JSON.stringify(obj));
+function setSubEntryLocal(checkpointId, designation, oilLevel, notes) {
+  if (!CACHE.sub[checkpointId]) CACHE.sub[checkpointId] = {};
+  CACHE.sub[checkpointId][designation] = { oilLevel: oilLevel || "", notes: notes || "" };
+}
+
+// The DB uses 'not_checked' (underscore) for status and '50%' (with percent
+// sign) for oil_level. Everything else in this file keeps using
+// 'not-checked' (hyphen) and '50' (bare number), matching what the old
+// localStorage-era code expected, to minimize changes elsewhere in this file.
+function dbStatusToState(status) {
+  if (status === "good" || status === "warning") return status;
+  return "not-checked";
+}
+function stateToDbStatus(state) {
+  if (state === "good" || state === "warning") return state;
+  return "not_checked";
+}
+function oilDbToLocal(oilLevel) {
+  return oilLevel ? String(oilLevel).replace("%", "") : "";
+}
+function oilLocalToDb(oilLevel) {
+  return oilLevel ? oilLevel + "%" : null;
+}
+
+// Rebuilds CACHE from the flat row list returned by ChecklistStore.loadAll().
+function ingestRows(rows) {
+  CACHE.group = {};
+  CACHE.sub = {};
+  (rows || []).forEach(function (row) {
+    if (!row || !row.checkpoint_id || !row.item_key) return;
+    if (row.item_key.indexOf("sub:") === 0) {
+      setSubEntryLocal(row.checkpoint_id, row.item_key.slice(4), oilDbToLocal(row.oil_level), row.notes);
+    } else {
+      setGroupEntryLocal(row.checkpoint_id, row.item_key, dbStatusToState(row.status), row.notes);
+    }
+  });
 }
 
 function debounce(fn, delay) {
@@ -116,7 +157,7 @@ function computeAggregateStatus(checkpoint) {
   let attentionFlags = 0;
   let recordedCount = 0;
 
-  const groupData = lsGetGroup(checkpoint.id);
+  const groupData = getGroupEntries(checkpoint.id);
   (checkpoint.groupChecklist || []).forEach(function (ci) {
     const entry = groupData[ci.item];
     const state = entry ? entry.state : "not-checked";
@@ -125,7 +166,7 @@ function computeAggregateStatus(checkpoint) {
   });
 
   (checkpoint.subsections || []).forEach(function (s) {
-    const sub = lsGetSub(checkpoint.id, s.designation);
+    const sub = getSubEntry(checkpoint.id, s.designation);
     if (sub.oilLevel) {
       recordedCount++;
       if (sub.oilLevel !== "50") attentionFlags++;
@@ -391,7 +432,7 @@ function buildSegmented(currentState, onChange) {
 }
 
 function buildCheckRow(checkpoint, checklistItem) {
-  const groupData = lsGetGroup(checkpoint.id);
+  const groupData = getGroupEntries(checkpoint.id);
   const current = groupData[checklistItem.item] || { state: "not-checked", notes: "" };
 
   const row = document.createElement("div");
@@ -411,12 +452,24 @@ function buildCheckRow(checkpoint, checklistItem) {
   nameWrap.appendChild(expected);
   head.appendChild(nameWrap);
 
+  // Visible failure indicator for this row's saves — a rejected write must
+  // never look like it silently succeeded just because the optimistic UI
+  // (button highlight / marker color) already updated.
+  const saveError = document.createElement("div");
+  saveError.className = "save-error-note";
+  saveError.textContent = "Couldn't save — check your connection and try again.";
+  saveError.hidden = true;
+
   const segmented = buildSegmented(current.state, function (newState) {
-    const gd = lsGetGroup(checkpoint.id);
-    const prevNotes = (gd[checklistItem.item] && gd[checklistItem.item].notes) || "";
-    gd[checklistItem.item] = { state: newState, notes: prevNotes };
-    lsSetGroup(checkpoint.id, gd);
+    const prevNotes = (getGroupEntries(checkpoint.id)[checklistItem.item] || {}).notes || "";
+    setGroupEntryLocal(checkpoint.id, checklistItem.item, newState, prevNotes);
     refreshStatusesUI();
+    saveError.hidden = true;
+    ChecklistStore.saveGroupItem(checkpoint.id, checklistItem.item, stateToDbStatus(newState), prevNotes)
+      .catch(function (err) {
+        console.error("Failed to save checklist item to Supabase:", checkpoint.id, checklistItem.item, err);
+        saveError.hidden = false;
+      });
   });
   head.appendChild(segmented);
   row.appendChild(head);
@@ -427,13 +480,18 @@ function buildCheckRow(checkpoint, checklistItem) {
   notesInput.placeholder = "Notes / actual reading";
   notesInput.value = current.notes || "";
   const saveNotes = debounce(function () {
-    const gd = lsGetGroup(checkpoint.id);
-    const stateNow = (gd[checklistItem.item] && gd[checklistItem.item].state) || "not-checked";
-    gd[checklistItem.item] = { state: stateNow, notes: notesInput.value };
-    lsSetGroup(checkpoint.id, gd);
+    const stateNow = (getGroupEntries(checkpoint.id)[checklistItem.item] || {}).state || "not-checked";
+    setGroupEntryLocal(checkpoint.id, checklistItem.item, stateNow, notesInput.value);
+    saveError.hidden = true;
+    ChecklistStore.saveGroupItem(checkpoint.id, checklistItem.item, stateToDbStatus(stateNow), notesInput.value)
+      .catch(function (err) {
+        console.error("Failed to save checklist notes to Supabase:", checkpoint.id, checklistItem.item, err);
+        saveError.hidden = false;
+      });
   }, 400);
   notesInput.addEventListener("input", saveNotes);
   row.appendChild(notesInput);
+  row.appendChild(saveError);
 
   return row;
 }
@@ -451,7 +509,7 @@ function buildUnitsSection(units) {
 }
 
 function buildSubRow(checkpoint, sub) {
-  const stored = lsGetSub(checkpoint.id, sub.designation);
+  const stored = getSubEntry(checkpoint.id, sub.designation);
 
   const row = document.createElement("div");
   row.className = "sub-row";
@@ -487,6 +545,12 @@ function buildSubRow(checkpoint, sub) {
   const controls = document.createElement("div");
   controls.className = "sub-row-controls";
 
+  // Visible failure indicator — see the matching comment in buildCheckRow().
+  const saveError = document.createElement("div");
+  saveError.className = "save-error-note";
+  saveError.textContent = "Couldn't save — check your connection and try again.";
+  saveError.hidden = true;
+
   const select = document.createElement("select");
   select.className = "oil-select";
   [["", "— Select —"], ["0", "0%"], ["25", "25%"], ["50", "50%"], ["75", "75%"], ["100", "100%"]].forEach(function (pair) {
@@ -497,10 +561,15 @@ function buildSubRow(checkpoint, sub) {
     select.appendChild(opt);
   });
   select.addEventListener("change", function () {
-    const s = lsGetSub(checkpoint.id, sub.designation);
-    s.oilLevel = select.value;
-    lsSetSub(checkpoint.id, sub.designation, s);
+    const existingNotes = getSubEntry(checkpoint.id, sub.designation).notes;
+    setSubEntryLocal(checkpoint.id, sub.designation, select.value, existingNotes);
     refreshStatusesUI();
+    saveError.hidden = true;
+    ChecklistStore.saveSubsection(checkpoint.id, sub.designation, oilLocalToDb(select.value), existingNotes)
+      .catch(function (err) {
+        console.error("Failed to save oil level to Supabase:", checkpoint.id, sub.designation, err);
+        saveError.hidden = false;
+      });
   });
   controls.appendChild(select);
 
@@ -510,14 +579,20 @@ function buildSubRow(checkpoint, sub) {
   notesInput.placeholder = "Notes";
   notesInput.value = stored.notes || "";
   const saveSubNotes = debounce(function () {
-    const s = lsGetSub(checkpoint.id, sub.designation);
-    s.notes = notesInput.value;
-    lsSetSub(checkpoint.id, sub.designation, s);
+    const existingOil = getSubEntry(checkpoint.id, sub.designation).oilLevel;
+    setSubEntryLocal(checkpoint.id, sub.designation, existingOil, notesInput.value);
+    saveError.hidden = true;
+    ChecklistStore.saveSubsection(checkpoint.id, sub.designation, oilLocalToDb(existingOil), notesInput.value)
+      .catch(function (err) {
+        console.error("Failed to save compressor notes to Supabase:", checkpoint.id, sub.designation, err);
+        saveError.hidden = false;
+      });
   }, 400);
   notesInput.addEventListener("input", saveSubNotes);
   controls.appendChild(notesInput);
 
   row.appendChild(controls);
+  row.appendChild(saveError);
 
   if (sub.override && sub.notes) {
     const staticNote = document.createElement("div");
@@ -643,12 +718,19 @@ function wireHeaderControls() {
   document.getElementById("tab-floor").addEventListener("click", function () { switchTab("floor"); });
   document.getElementById("tab-roof").addEventListener("click", function () { switchTab("roof"); });
   document.getElementById("btn-reset").addEventListener("click", function () {
-    const ok = confirm("Reset ALL recorded checklist entries in this browser? This cannot be undone.");
+    const ok = confirm("Reset ALL recorded checklist entries for everyone using this dashboard? This cannot be undone.");
     if (!ok) return;
-    Object.keys(localStorage).filter(function (k) { return k.indexOf(LS_PREFIX) === 0; })
-      .forEach(function (k) { localStorage.removeItem(k); });
-    closePanel();
-    refreshStatusesUI();
+    ChecklistStore.resetAll()
+      .then(function () {
+        CACHE.group = {};
+        CACHE.sub = {};
+        closePanel();
+        refreshStatusesUI();
+      })
+      .catch(function (err) {
+        console.error("ChecklistStore.resetAll failed:", err);
+        alert("Couldn't reset entries — the database delete failed. Check your connection and try again.");
+      });
   });
 }
 
@@ -660,12 +742,49 @@ function wirePanelControls() {
   });
 }
 
-function init() {
+// -------------------------------------------------------------- load status UI
+function wireLoadBanner() {
+  const dismissBtn = document.getElementById("load-error-dismiss");
+  if (dismissBtn) {
+    dismissBtn.addEventListener("click", function () {
+      document.getElementById("load-error-banner").hidden = true;
+    });
+  }
+}
+
+function setLoadingIndicator(isLoading) {
+  const el = document.getElementById("load-status");
+  if (el) el.hidden = !isLoading;
+}
+
+function showLoadErrorBanner() {
+  const el = document.getElementById("load-error-banner");
+  if (el) el.hidden = false;
+}
+
+async function init() {
   renderLegend();
-  renderFloorSVG();
-  renderRoofGrid();
   wireHeaderControls();
   wirePanelControls();
+  wireLoadBanner();
+
+  // Render immediately against an empty cache (-> everything "not-checked")
+  // so the UI is never blank/broken while the initial Supabase load is in
+  // flight — this doubles as the "loading" state for the map/roof grid.
+  renderFloorSVG();
+  renderRoofGrid();
+
+  setLoadingIndicator(true);
+  try {
+    const rows = await ChecklistStore.loadAll();
+    ingestRows(rows);
+  } catch (err) {
+    console.error("ChecklistStore.loadAll failed:", err);
+    showLoadErrorBanner();
+  } finally {
+    setLoadingIndicator(false);
+    refreshStatusesUI();
+  }
 }
 
 document.addEventListener("DOMContentLoaded", init);

@@ -36,10 +36,17 @@ The raw exported CSV this was built from is kept at
 
 ## Persistence
 
-Entries are saved to **localStorage in your own browser only** — there's no
-backend or shared database yet. Readings won't sync between devices, and
-clearing browser data clears them. A "Reset all entries" button in the
-header wipes everything after a confirmation prompt.
+Entries are saved to a **shared Supabase database** (see
+[`js/supabase-client.js`](js/supabase-client.js) and
+[`supabase/schema.sql`](supabase/schema.sql)) — every reading is visible to
+anyone with this dashboard's link, and syncs across devices immediately.
+There's no login: access control is enforced by Postgres Row Level Security
+policies, deliberately left open to match this tool's no-login internal use.
+If the dashboard can't reach the database on load, it shows an error banner
+and falls back to displaying everything as "Not checked" rather than
+crashing. A "Reset all entries" button in the header wipes every row in the
+shared table after a confirmation prompt — this affects everyone using the
+dashboard, not just your browser.
 
 ## Running locally
 

@@ -178,6 +178,29 @@ button, input, select {
   background: var(--bg-panel-raised);
 }
 
+/* ------------------------------------------------------------ load banner */
+.load-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  background: rgba(208, 59, 59, 0.12);
+  border-bottom: 1px solid rgba(208, 59, 59, 0.4);
+  color: var(--status-critical);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.load-error-banner[hidden] {
+  display: none;
+}
+
+.load-error-dismiss {
+  color: var(--status-critical);
+  flex: none;
+}
+
 /* ------------------------------------------------------------ legend */
 .legend-bar {
   display: flex;
@@ -618,6 +641,16 @@ main {
   padding: 6px 8px;
   font-family: var(--font-mono);
   font-size: 0.78rem;
+}
+
+.save-error-note {
+  font-size: 0.74rem;
+  color: var(--status-critical);
+  font-weight: 600;
+}
+
+.save-error-note[hidden] {
+  display: none;
 }
 
 .assumed-note {
