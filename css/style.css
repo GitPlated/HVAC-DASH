@@ -18,9 +18,9 @@
 
   --status-good: #0ca30c;
   --status-warning: #fab219;
-  --status-serious: #ec835a;
   --status-critical: #d03b3b;
   --status-notchecked: #6b6a66;
+  --status-resolved: #2e8f8f;
 
   --cat-raw-fill: #1b3a5c;
   --cat-raw-stroke: #3d6690;
@@ -560,9 +560,9 @@ main {
   color: #fff;
 }
 
-.segmented button[data-state="not-checked"].is-active { background: var(--status-notchecked); }
-.segmented button[data-state="good"].is-active { background: var(--status-good); }
-.segmented button[data-state="warning"].is-active { background: var(--status-warning); color: #1a1200; }
+.segmented button[data-state="not_checked"].is-active { background: var(--status-notchecked); }
+.segmented button[data-state="ok"].is-active { background: var(--status-good); }
+.segmented button[data-state="attention"].is-active { background: var(--status-warning); color: #1a1200; }
 
 .notes-input, .sub-notes-input, textarea.notes-input {
   width: 100%;
@@ -660,4 +660,346 @@ main {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+/* ------------------------------------------------------------ active-issue pulse (map markers) */
+@keyframes marker-pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+.marker-pulse-ring {
+  fill: none;
+  stroke: var(--status-critical);
+  stroke-width: 2.5;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: marker-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+}
+
+.marker-ring-alert {
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-width: 1.5;
+}
+
+/* ------------------------------------------------------------ active-issue highlight (rooms) */
+@keyframes room-alert-glow {
+  0% { stroke-width: 2; stroke-opacity: 0.9; }
+  50% { stroke-width: 6; stroke-opacity: 0.25; }
+  100% { stroke-width: 2; stroke-opacity: 0.9; }
+}
+
+.room-alert-ring {
+  fill: none;
+  stroke: var(--status-critical);
+  animation: room-alert-glow 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.room-alert-badge {
+  color: var(--status-critical);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marker-pulse-ring {
+    animation: none;
+    opacity: 0.9;
+    stroke-width: 3.5;
+  }
+  .room-alert-ring {
+    animation: none;
+    stroke-width: 3;
+    stroke-opacity: 0.9;
+  }
+}
+
+/* ------------------------------------------------------------ roof card active-issue */
+.roof-card {
+  position: relative;
+}
+
+.roof-card-alert {
+  border-color: var(--status-critical);
+}
+
+@keyframes roof-card-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(208, 59, 59, 0.55); }
+  100% { box-shadow: 0 0 0 12px rgba(208, 59, 59, 0); }
+}
+
+.roof-card-alert::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  animation: roof-card-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roof-card-alert::before {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--status-critical);
+  }
+}
+
+/* ------------------------------------------------------------ finding indicator (item rows / cards) */
+.finding-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel-raised);
+  color: var(--ink-primary);
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  width: fit-content;
+}
+
+button.finding-indicator {
+  font-family: inherit;
+}
+
+.finding-indicator-active {
+  color: var(--status-critical);
+  border-color: rgba(208, 59, 59, 0.45);
+}
+
+.finding-indicator-resolved {
+  color: var(--status-resolved);
+  border-color: rgba(46, 143, 143, 0.45);
+}
+
+.finding-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.finding-add-update-btn {
+  font-size: 0.74rem;
+  padding: 6px 10px;
+}
+
+/* ------------------------------------------------------------ finding timeline */
+.finding-timeline-wrap {
+  width: 100%;
+}
+
+.finding-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: 2px solid var(--grid-line);
+  padding-left: 10px;
+  margin-top: 4px;
+}
+
+.finding-timeline-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.finding-timeline-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+}
+
+.finding-timeline-time {
+  font-family: var(--font-mono);
+}
+
+.finding-timeline-message {
+  font-size: 0.82rem;
+  color: var(--ink-primary);
+}
+
+.finding-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
+}
+
+.finding-status-badge.finding-status-in_progress {
+  color: var(--status-warning);
+  border-color: rgba(250, 178, 25, 0.5);
+}
+
+.finding-status-badge.finding-status-monitoring {
+  color: #6fa8dc;
+  border-color: rgba(111, 168, 220, 0.5);
+}
+
+.finding-status-badge.finding-status-resolved {
+  color: var(--status-resolved);
+  border-color: rgba(46, 143, 143, 0.5);
+}
+
+/* ------------------------------------------------------------ update form */
+.update-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.update-form-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-secondary);
+}
+
+.update-status-group {
+  align-self: flex-start;
+}
+
+.update-message-input {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.update-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ------------------------------------------------------------ daily log page */
+.log-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.log-date-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-secondary);
+}
+
+.log-date-input {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--ink-primary);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+
+.daily-log-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.log-row {
+  display: flex;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--grid-line);
+}
+
+.log-row-time {
+  flex: none;
+  width: 68px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  padding-top: 1px;
+}
+
+.log-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.log-row-equipment {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.log-row-item {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.log-row-value {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.log-row-notes {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  font-style: italic;
+}
+
+/* ------------------------------------------------------------ findings page */
+.findings-controls {
+  margin-bottom: 14px;
+}
+
+.findings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 720px;
+}
+
+.finding-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.finding-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.finding-card-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.finding-card-meta {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+/* ------------------------------------------------------------ empty state */
+.empty-state {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  padding: 24px 4px;
 }

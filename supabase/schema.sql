@@ -1,38 +1,81 @@
--- HVAC-DASH: refrigeration daily rounds checklist entries
+-- HVAC-DASH v2 schema: append-only activity log + issue tracking
 --
--- One row per recorded item. checkpoint_id matches an EQUIPMENT_GROUPS.id
--- from js/data.js. item_key is either a groupChecklist item's exact name
--- (e.g. "Suction and Discharge Pressure"), or "sub:<designation>" for a rack
--- compressor subsection's oil-level reading (e.g. "sub:5").
+-- Replaces the old public.checklist_entries table (which stored a single
+-- overwritten row per checkpoint+item) with three tables:
+--   checklist_log   — append-only history of every status/reading entered.
+--                      "Current" status for the map/panel is always derived
+--                      client-side from the LATEST row per
+--                      (checkpoint_id, item_key) — there's no separate
+--                      "current state" table to keep in sync.
+--   findings        — one row per tracked issue, opened when "Attention" is
+--                      selected on a group checklist item.
+--   finding_updates — append-only, immutable timestamped updates within a
+--                      finding (status + message), logged until the finding
+--                      is marked resolved.
 --
--- RLS is intentionally fully open to the anon role: this tool has no login
--- system, so anyone with the dashboard's URL can read/write entries. That
--- was a deliberate choice for this internal tool, not an oversight.
+-- RLS stays fully open to the anon role, matching this no-login tool's
+-- existing model (see the original schema.sql history / README for why).
 
-create table if not exists public.checklist_entries (
+drop table if exists public.checklist_entries;
+
+create table if not exists public.checklist_log (
+  id bigint generated always as identity primary key,
   checkpoint_id text not null,
   item_key text not null,
-  status text,                 -- 'not_checked' | 'good' | 'warning' (group checklist items)
-  oil_level text,               -- '0%' | '25%' | '50%' | '75%' | '100%' (rack subsections only)
+  status text,                 -- 'not_checked' | 'ok' | 'attention' (group checklist items only)
+  oil_level text,                -- '0%' | '25%' | '50%' | '75%' | '100%' (rack subsections only)
   notes text not null default '',
-  updated_at timestamptz not null default now(),
-  primary key (checkpoint_id, item_key)
+  created_at timestamptz not null default now()
 );
 
-alter table public.checklist_entries enable row level security;
+create index if not exists checklist_log_lookup on public.checklist_log (checkpoint_id, item_key, created_at desc);
+create index if not exists checklist_log_created_at on public.checklist_log (created_at desc);
 
-drop policy if exists "Allow anon read" on public.checklist_entries;
-create policy "Allow anon read" on public.checklist_entries
-  for select to anon using (true);
+create table if not exists public.findings (
+  id bigint generated always as identity primary key,
+  checkpoint_id text not null,
+  item_key text not null,
+  status text not null default 'in_progress',  -- 'in_progress' | 'monitoring' | 'resolved'
+  opened_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
 
-drop policy if exists "Allow anon insert" on public.checklist_entries;
-create policy "Allow anon insert" on public.checklist_entries
-  for insert to anon with check (true);
+create index if not exists findings_checkpoint on public.findings (checkpoint_id, item_key);
+create index if not exists findings_status on public.findings (status);
 
-drop policy if exists "Allow anon update" on public.checklist_entries;
-create policy "Allow anon update" on public.checklist_entries
-  for update to anon using (true) with check (true);
+create table if not exists public.finding_updates (
+  id bigint generated always as identity primary key,
+  finding_id bigint not null references public.findings (id) on delete cascade,
+  status text not null,        -- 'in_progress' | 'monitoring' | 'resolved' — status as of THIS update
+  message text not null,
+  created_at timestamptz not null default now()
+);
 
-drop policy if exists "Allow anon delete" on public.checklist_entries;
-create policy "Allow anon delete" on public.checklist_entries
-  for delete to anon using (true);
+create index if not exists finding_updates_finding on public.finding_updates (finding_id, created_at);
+
+alter table public.checklist_log enable row level security;
+alter table public.findings enable row level security;
+alter table public.finding_updates enable row level security;
+
+drop policy if exists "Allow anon read" on public.checklist_log;
+create policy "Allow anon read" on public.checklist_log for select to anon using (true);
+drop policy if exists "Allow anon insert" on public.checklist_log;
+create policy "Allow anon insert" on public.checklist_log for insert to anon with check (true);
+drop policy if exists "Allow anon delete" on public.checklist_log;
+create policy "Allow anon delete" on public.checklist_log for delete to anon using (true); -- Reset all entries only
+
+drop policy if exists "Allow anon read" on public.findings;
+create policy "Allow anon read" on public.findings for select to anon using (true);
+drop policy if exists "Allow anon insert" on public.findings;
+create policy "Allow anon insert" on public.findings for insert to anon with check (true);
+drop policy if exists "Allow anon update" on public.findings;
+create policy "Allow anon update" on public.findings for update to anon using (true) with check (true);
+drop policy if exists "Allow anon delete" on public.findings;
+create policy "Allow anon delete" on public.findings for delete to anon using (true); -- Reset all entries only
+
+drop policy if exists "Allow anon read" on public.finding_updates;
+create policy "Allow anon read" on public.finding_updates for select to anon using (true);
+drop policy if exists "Allow anon insert" on public.finding_updates;
+create policy "Allow anon insert" on public.finding_updates for insert to anon with check (true);
+drop policy if exists "Allow anon delete" on public.finding_updates;
+create policy "Allow anon delete" on public.finding_updates for delete to anon using (true); -- Reset all entries only

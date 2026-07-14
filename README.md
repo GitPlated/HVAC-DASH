@@ -19,9 +19,7 @@ Sheet and a hand-drawn facility floor plan.
 
 The source sheet was an **unfilled template** — no round had been logged
 (the Date field was blank), so nothing here defaults to "passing." Every
-item starts as "Not checked." The one exception is Rack B Compressor 5,
-which the sheet already flags as `BAD COMPRESSOR / NOT IN SERVICE — Working
-with AMS for replacement` — that shows up pre-loaded as a critical fault.
+item starts as "Not checked."
 
 The sheet's Location column didn't always match a labeled room on the floor
 plan exactly. Where a checkpoint's room was inferred rather than confirmed,
@@ -45,8 +43,19 @@ policies, deliberately left open to match this tool's no-login internal use.
 If the dashboard can't reach the database on load, it shows an error banner
 and falls back to displaying everything as "Not checked" rather than
 crashing. A "Reset all entries" button in the header wipes every row in the
-shared table after a confirmation prompt — this affects everyone using the
-dashboard, not just your browser.
+shared tables (`checklist_log`, `findings`, `finding_updates`) after a
+confirmation prompt — this affects everyone using the dashboard, not just
+your browser.
+
+Every status change and reading is appended to an activity log rather than
+overwritten — browsable on the **Daily Log** tab, filterable by day.
+Selecting "Attention" on a checklist item opens an "update" form (In
+Progress / Monitoring / Resolved + a message) and starts a **finding**: an
+issue tracked through an immutable, timestamped log of updates until it's
+marked resolved. Any equipment with an unresolved finding shows a
+pulsating red indicator on the map and its Roof Level card, and shows up
+on the **Findings** tab, which lists every tracked issue and its full
+update history.
 
 ## Running locally
 

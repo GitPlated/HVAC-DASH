@@ -1,44 +1,87 @@
 /*
- * app.js — renders the floor plan / roof panel from ROOMS + EQUIPMENT_GROUPS
- * and manages checklist state backed by Supabase (via window.ChecklistStore,
- * defined in js/supabase-client.js). Plain script, no modules, no build
- * step — relies on rooms.js, data.js, and supabase-client.js having already
- * defined their globals before this file runs.
+ * app.js — renders the floor plan / roof panel / daily log / findings pages
+ * from ROOMS + EQUIPMENT_GROUPS and manages checklist + findings state backed
+ * by Supabase (via window.ChecklistStore, defined in js/supabase-client.js).
+ * Plain script, no modules, no build step — relies on rooms.js, data.js, and
+ * supabase-client.js having already defined their globals before this file
+ * runs.
  *
- * All checklist reads/writes go through an in-memory CACHE that mirrors the
- * shape this file used to reconstruct from localStorage, so the
- * rendering/status-computation functions below barely had to change:
- *   CACHE.group[checkpointId][itemName]  -> { state, notes }
- *   CACHE.sub[checkpointId][designation] -> { oilLevel, notes }
- * CACHE is populated once on startup from ChecklistStore.loadAll(), and kept
- * in sync optimistically on every user edit — the same edit also fires an
- * async write to Supabase in the background. A failed background write is
- * logged to the console; it does not roll back the optimistic UI state (the
- * next full page load's loadAll() is the real source of truth).
+ * Data model (mirrors supabase/schema.sql):
+ *   - checklist_log is APPEND-ONLY. Every status change or reading is a new
+ *     row. "Current" value for a (checkpoint_id, item_key) pair is always
+ *     the latest row for that pair, computed client-side after one bulk
+ *     fetch (see ingestLog / recomputeCacheFromLog below).
+ *   - findings is one row per tracked issue (opened when "Attention" is
+ *     selected on a groupChecklist item and saved via the in-panel update
+ *     form). finding_updates is an append-only, immutable timeline of
+ *     status+message entries within a finding.
+ *   - Rack subsections (oil level) are logged the same way as group items
+ *     but never get the findings workflow.
+ *
+ * In-memory state, populated once on startup from ChecklistStore.loadAll()
+ * and kept in sync optimistically on every user edit (the same edit also
+ * fires an async write to Supabase in the background; a failed background
+ * write is surfaced inline and logged to the console — it does not roll
+ * back the optimistic UI, matching the app's existing philosophy that the
+ * next full page load is the real source of truth):
+ *
+ *   LOG_ROWS            -> raw checklist_log rows (kept for the Daily Log feed)
+ *   CACHE.group[cpId][itemKey] -> { state, notes }   (derived "latest" view)
+ *   CACHE.sub[cpId][designation] -> { oilLevel, notes } (derived "latest" view)
+ *   FINDINGS_LIST       -> raw findings rows
+ *   FINDING_UPDATES_LIST-> raw finding_updates rows
+ *   FINDINGS_BY_ID      -> finding.id -> finding
+ *   UPDATES_BY_FINDING  -> finding.id -> [updates] (sorted newest first)
+ *   FINDINGS_BY_ITEM    -> "cpId::itemKey" -> [findings] (sorted oldest first)
  */
 
-// Fixed, non-themed colors. Kept in sync by hand with the CSS custom
-// properties of the same name in css/style.css — these never change between
-// light/dark, so hardcoding hex here (rather than reading CSS vars back out
-// of the DOM) is simplest and avoids var()-in-SVG-attribute edge cases.
-const STATUS_COLORS = {
-  "not-checked": "#6b6a66",
-  "good": "#0ca30c",
-  "warning": "#fab219",
-  "serious": "#ec835a",
-  "critical": "#d03b3b"
-};
-
-const STATUS_META = {
-  "not-checked": { label: "Not checked", color: STATUS_COLORS["not-checked"], text: "#ffffff" },
-  "good": { label: "OK", color: STATUS_COLORS.good, text: "#ffffff" },
-  "warning": { label: "Attention", color: STATUS_COLORS.warning, text: "#1a1200" },
-  "serious": { label: "Serious", color: STATUS_COLORS.serious, text: "#1a1200" },
-  "critical": { label: "Fault", color: STATUS_COLORS.critical, text: "#ffffff" }
-};
-
+// ---------------------------------------------------------------- vocabulary
 // The 3-state control on group checklist rows only ever uses these three.
-const ITEM_STATES = ["not-checked", "good", "warning"];
+// Values match the checklist_log.status column exactly (no more hyphen/
+// underscore translation layer).
+const ITEM_STATES = ["not_checked", "ok", "attention"];
+
+const ITEM_STATE_META = {
+  "not_checked": { label: "Not checked", color: "#6b6a66", text: "#ffffff" },
+  "ok": { label: "OK", color: "#0ca30c", text: "#ffffff" },
+  "attention": { label: "Attention", color: "#fab219", text: "#1a1200" }
+};
+
+// Aggregate status for a checkpoint's marker / roof card / legend. Severity
+// is tracked entirely through a finding's own in_progress/monitoring/resolved
+// lifecycle now, not by counting flagged items, so the old graduated
+// warning/serious/critical tiers are gone.
+const AGGREGATE_STATUS_META = {
+  "not_checked": { label: "Not checked", color: "#6b6a66", text: "#ffffff" },
+  "ok": { label: "OK", color: "#0ca30c", text: "#ffffff" },
+  "active_issue": { label: "Active issue", color: "#d03b3b", text: "#ffffff" },
+  "resolved_issue": { label: "Resolved issue", color: "#2e8f8f", text: "#ffffff" }
+};
+
+// The 3-option status used inside a finding's "Log an update" form and shown
+// on its immutable timeline entries.
+const FINDING_STATE_META = {
+  "in_progress": { label: "In Progress" },
+  "monitoring": { label: "Monitoring" },
+  "resolved": { label: "Resolved" }
+};
+
+// Distinct glyph shapes per status so color is never the only signal
+// (dash / check / triangle / triangle-with-! / circle-check). currentColor
+// is used throughout so callers can tint via the CSS `color` property (or
+// element.style.color) whether the icon lives in HTML or in the SVG map.
+const ICON_SHAPES = {
+  "not_checked": '<line x1="5" y1="10" x2="15" y2="10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>',
+  "ok": '<path d="M4 10.5 L8.5 15 L16 5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>',
+  "attention": '<path d="M10 3 L18 17 L2 17 Z" fill="currentColor"/>',
+  "active_issue": '<path d="M10 2 L18.5 17 L1.5 17 Z" fill="currentColor"/><rect x="9" y="7" width="2" height="5" fill="#fff"/><rect x="9" y="13.4" width="2" height="2" fill="#fff"/>',
+  "resolved_issue": '<circle cx="10" cy="10" r="8.5" fill="currentColor"/><path d="M5.7 10.3 L8.7 13.3 L14.5 6.7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+};
+
+function iconHTML(status, size) {
+  return '<svg viewBox="0 0 20 20" width="' + size + '" height="' + size + '" aria-hidden="true">' +
+    ICON_SHAPES[status] + '</svg>';
+}
 
 const CATEGORY_COLORS = {
   raw: { fill: "#1b3a5c", stroke: "#3d6690", text: "#eef2f6" },
@@ -47,29 +90,15 @@ const CATEGORY_COLORS = {
   mechanical: { fill: "#46525c", stroke: "#6f7a84", text: "#eef2f6" }
 };
 
-// Distinct glyph shapes per status so color is never the only signal
-// (dash / check / solid triangle / solid diamond / X-cross). currentColor
-// is used throughout so callers can tint via the CSS `color` property (or
-// element.style.color) whether the icon lives in HTML or in the SVG map.
-const ICON_SHAPES = {
-  "not-checked": '<line x1="5" y1="10" x2="15" y2="10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>',
-  "good": '<path d="M4 10.5 L8.5 15 L16 5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>',
-  "warning": '<path d="M10 3 L18 17 L2 17 Z" fill="currentColor"/>',
-  "serious": '<path d="M10 2 L18 10 L10 18 L2 10 Z" fill="currentColor"/>',
-  "critical": '<path d="M5 5 L15 15 M15 5 L5 15" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>'
-};
-
-function iconHTML(status, size) {
-  return '<svg viewBox="0 0 20 20" width="' + size + '" height="' + size + '" aria-hidden="true">' +
-    ICON_SHAPES[status] + '</svg>';
-}
-
 // ---------------------------------------------------------------- storage
-// In-memory cache of checklist entries. Populated by ingestRows() after
-// ChecklistStore.loadAll() resolves, and updated optimistically by the
-// setGroupEntryLocal/setSubEntryLocal helpers whenever the user edits
-// something (see buildCheckRow / buildSubRow below).
 const CACHE = { group: {}, sub: {} };
+
+let LOG_ROWS = [];
+let FINDINGS_LIST = [];
+let FINDING_UPDATES_LIST = [];
+let FINDINGS_BY_ID = {};
+let UPDATES_BY_FINDING = {};
+let FINDINGS_BY_ITEM = {};
 
 function getGroupEntries(checkpointId) {
   return CACHE.group[checkpointId] || {};
@@ -89,18 +118,6 @@ function setSubEntryLocal(checkpointId, designation, oilLevel, notes) {
   CACHE.sub[checkpointId][designation] = { oilLevel: oilLevel || "", notes: notes || "" };
 }
 
-// The DB uses 'not_checked' (underscore) for status and '50%' (with percent
-// sign) for oil_level. Everything else in this file keeps using
-// 'not-checked' (hyphen) and '50' (bare number), matching what the old
-// localStorage-era code expected, to minimize changes elsewhere in this file.
-function dbStatusToState(status) {
-  if (status === "good" || status === "warning") return status;
-  return "not-checked";
-}
-function stateToDbStatus(state) {
-  if (state === "good" || state === "warning") return state;
-  return "not_checked";
-}
 function oilDbToLocal(oilLevel) {
   return oilLevel ? String(oilLevel).replace("%", "") : "";
 }
@@ -108,18 +125,95 @@ function oilLocalToDb(oilLevel) {
   return oilLevel ? oilLevel + "%" : null;
 }
 
-// Rebuilds CACHE from the flat row list returned by ChecklistStore.loadAll().
-function ingestRows(rows) {
+// Rebuilds CACHE (the "latest value per key" view) from the flat row list
+// returned by ChecklistStore.loadLog() / kept in LOG_ROWS. Rows are folded in
+// ascending timestamp order so the last write per key wins — no separate
+// "find max" pass needed.
+function recomputeCacheFromLog() {
   CACHE.group = {};
   CACHE.sub = {};
-  (rows || []).forEach(function (row) {
+  const sorted = LOG_ROWS.slice().sort(function (a, b) {
+    return (new Date(a.created_at) - new Date(b.created_at)) || ((a.id || 0) - (b.id || 0));
+  });
+  sorted.forEach(function (row) {
     if (!row || !row.checkpoint_id || !row.item_key) return;
     if (row.item_key.indexOf("sub:") === 0) {
       setSubEntryLocal(row.checkpoint_id, row.item_key.slice(4), oilDbToLocal(row.oil_level), row.notes);
     } else {
-      setGroupEntryLocal(row.checkpoint_id, row.item_key, dbStatusToState(row.status), row.notes);
+      setGroupEntryLocal(row.checkpoint_id, row.item_key, row.status || "not_checked", row.notes);
     }
   });
+}
+
+function ingestLog(rows) {
+  LOG_ROWS = rows || [];
+  recomputeCacheFromLog();
+}
+
+function rebuildFindingMaps() {
+  FINDINGS_BY_ID = {};
+  FINDINGS_LIST.forEach(function (f) { FINDINGS_BY_ID[f.id] = f; });
+
+  UPDATES_BY_FINDING = {};
+  FINDING_UPDATES_LIST.forEach(function (u) {
+    if (!UPDATES_BY_FINDING[u.finding_id]) UPDATES_BY_FINDING[u.finding_id] = [];
+    UPDATES_BY_FINDING[u.finding_id].push(u);
+  });
+  Object.keys(UPDATES_BY_FINDING).forEach(function (fid) {
+    UPDATES_BY_FINDING[fid].sort(function (a, b) {
+      return (new Date(b.created_at) - new Date(a.created_at)) || ((b.id || 0) - (a.id || 0));
+    });
+  });
+
+  FINDINGS_BY_ITEM = {};
+  FINDINGS_LIST.forEach(function (f) {
+    const key = f.checkpoint_id + "::" + f.item_key;
+    if (!FINDINGS_BY_ITEM[key]) FINDINGS_BY_ITEM[key] = [];
+    FINDINGS_BY_ITEM[key].push(f);
+  });
+  Object.keys(FINDINGS_BY_ITEM).forEach(function (key) {
+    FINDINGS_BY_ITEM[key].sort(function (a, b) {
+      return (new Date(a.opened_at) - new Date(b.opened_at)) || ((a.id || 0) - (b.id || 0));
+    });
+  });
+}
+
+function ingestFindings(findingsRows, updateRows) {
+  FINDINGS_LIST = findingsRows || [];
+  FINDING_UPDATES_LIST = updateRows || [];
+  rebuildFindingMaps();
+}
+
+// Merges a freshly-created/updated finding + update into local state without
+// a re-fetch.
+function applyFindingResult(finding, update) {
+  if (finding) {
+    const idx = FINDINGS_LIST.findIndex(function (f) { return f.id === finding.id; });
+    if (idx >= 0) FINDINGS_LIST[idx] = finding;
+    else FINDINGS_LIST.push(finding);
+  }
+  if (update) FINDING_UPDATES_LIST.push(update);
+  rebuildFindingMaps();
+}
+
+// { unresolved: finding|null, mostRecent: finding|null } for a checkpoint+item.
+// There should be at most one unresolved finding per pair at a time (the save
+// flow below enforces that by re-using any existing unresolved finding).
+function getItemFindingInfo(checkpointId, itemKey) {
+  const list = FINDINGS_BY_ITEM[checkpointId + "::" + itemKey] || [];
+  let unresolved = null;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].status !== "resolved") { unresolved = list[i]; break; }
+  }
+  return { unresolved: unresolved, mostRecent: list.length ? list[list.length - 1] : null, all: list };
+}
+
+function checkpointHasUnresolvedFinding(checkpointId) {
+  return FINDINGS_LIST.some(function (f) { return f.checkpoint_id === checkpointId && f.status !== "resolved"; });
+}
+
+function checkpointHasResolvedFinding(checkpointId) {
+  return FINDINGS_LIST.some(function (f) { return f.checkpoint_id === checkpointId && f.status === "resolved"; });
 }
 
 function debounce(fn, delay) {
@@ -134,49 +228,35 @@ function debounce(fn, delay) {
 
 // -------------------------------------------------------------- aggregate
 /*
- * Aggregate status for a checkpoint's marker / card color.
- *  - A static deficiency note (subsections[].override, baked into data.js)
- *    always forces "critical" — it's a known fault already documented on the
- *    real sheet, not something a technician has to trigger by checking a box.
- *  - Otherwise, count "Attention" flags across the group checklist items and
- *    across rack subsections whose recorded oil level isn't the expected
- *    50%. Thresholds below are a documented judgment call (the spec leaves
- *    exact tuning open):
- *      0 flags, nothing recorded  -> "not-checked"
- *      0 flags, something recorded -> "good"
- *      1 flag                      -> "warning"
- *      2+ flags                    -> "serious"
- *  A checkpoint NEVER shows "good" unless at least one item has actually
- *  been recorded, and a deficiency note always wins regardless of anything
- *  else recorded.
+ * Aggregate status for a checkpoint's marker / card color:
+ *   - "active_issue" wins over everything else: at least one UNRESOLVED
+ *     finding exists for any item on this checkpoint. This is independent of
+ *     whatever the raw Not-checked/OK/Attention toggle currently shows.
+ *   - "resolved_issue": no unresolved finding, but at least one finding on
+ *     this checkpoint has been resolved — worth a calmer, distinct note that
+ *     this equipment had a tracked issue.
+ *   - "ok": nothing unresolved/resolved to flag, and at least one item has
+ *     actually been recorded (group item != not_checked, or an oil level was
+ *     entered).
+ *   - "not_checked": nothing recorded at all yet.
  */
 function computeAggregateStatus(checkpoint) {
-  const hasOverride = (checkpoint.subsections || []).some(function (s) { return !!s.override; });
-  if (hasOverride) return "critical";
+  if (checkpointHasUnresolvedFinding(checkpoint.id)) return "active_issue";
+  if (checkpointHasResolvedFinding(checkpoint.id)) return "resolved_issue";
 
-  let attentionFlags = 0;
   let recordedCount = 0;
-
   const groupData = getGroupEntries(checkpoint.id);
   (checkpoint.groupChecklist || []).forEach(function (ci) {
     const entry = groupData[ci.item];
-    const state = entry ? entry.state : "not-checked";
-    if (state !== "not-checked") recordedCount++;
-    if (state === "warning") attentionFlags++;
+    const state = entry ? entry.state : "not_checked";
+    if (state !== "not_checked") recordedCount++;
   });
-
   (checkpoint.subsections || []).forEach(function (s) {
     const sub = getSubEntry(checkpoint.id, s.designation);
-    if (sub.oilLevel) {
-      recordedCount++;
-      if (sub.oilLevel !== "50") attentionFlags++;
-    }
+    if (sub.oilLevel) recordedCount++;
   });
 
-  if (attentionFlags >= 2) return "serious";
-  if (attentionFlags === 1) return "warning";
-  if (recordedCount > 0) return "good";
-  return "not-checked";
+  return recordedCount > 0 ? "ok" : "not_checked";
 }
 
 // -------------------------------------------------------------- lookups
@@ -184,11 +264,23 @@ const ROOMS_BY_ID = {};
 ROOMS.forEach(function (r) { ROOMS_BY_ID[r.id] = r; });
 
 const CHECKPOINTS_BY_ROOM = {};
+const EQUIPMENT_BY_ID = {};
 EQUIPMENT_GROUPS.forEach(function (cp) {
+  EQUIPMENT_BY_ID[cp.id] = cp;
   if (cp.roomKey === "roof") return;
   if (!CHECKPOINTS_BY_ROOM[cp.roomKey]) CHECKPOINTS_BY_ROOM[cp.roomKey] = [];
   CHECKPOINTS_BY_ROOM[cp.roomKey].push(cp);
 });
+
+function roomHasActiveIssue(roomId) {
+  const cps = CHECKPOINTS_BY_ROOM[roomId] || [];
+  return cps.some(function (cp) { return checkpointHasUnresolvedFinding(cp.id); });
+}
+
+function itemDisplayName(checkpoint, itemKey) {
+  if (itemKey && itemKey.indexOf("sub:") === 0) return "Compressor " + itemKey.slice(4);
+  return itemKey;
+}
 
 // -------------------------------------------------------------- SVG helpers
 function svgEl(tag, attrs) {
@@ -220,12 +312,13 @@ function layoutMarkers(room, count) {
 
 function buildMarker(checkpoint, cx, cy) {
   const status = computeAggregateStatus(checkpoint);
+  const meta = AGGREGATE_STATUS_META[status];
   const g = svgEl("g", { "class": "marker", tabindex: "0", role: "button" });
 
   const title = svgEl("title");
   let titleText = checkpoint.equipment +
     (checkpoint.designation ? " (" + checkpoint.designation + ")" : "") +
-    " — " + STATUS_META[status].label;
+    " — " + meta.label;
   if (checkpoint.roomConfidence === "assumed") {
     titleText += " · Assumed placement — confirm on-site";
   }
@@ -239,9 +332,16 @@ function buildMarker(checkpoint, cx, cy) {
     }));
   }
 
+  if (status === "active_issue") {
+    const pulseWrap = svgEl("g", { "class": "marker-pulse-wrap", transform: "translate(" + cx + "," + cy + ")" });
+    pulseWrap.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 7, "class": "marker-pulse-ring" }));
+    g.appendChild(pulseWrap);
+  }
+
   g.appendChild(svgEl("circle", {
-    cx: cx, cy: cy, r: 7, fill: STATUS_COLORS[status],
-    stroke: "rgba(0,0,0,0.35)", "stroke-width": 1, "class": "marker-ring"
+    cx: cx, cy: cy, r: 7, fill: meta.color,
+    stroke: "rgba(0,0,0,0.35)", "stroke-width": 1,
+    "class": "marker-ring" + (status === "active_issue" ? " marker-ring-alert" : "")
   }));
 
   const glyph = svgEl("g", { transform: "translate(" + (cx - 5) + "," + (cy - 5) + ") scale(0.5)" });
@@ -295,6 +395,28 @@ function renderFloorSVG() {
     text.setAttribute("fill", tokens.text);
     text.textContent = room.label;
     roomsG.appendChild(text);
+
+    if (roomHasActiveIssue(room.id)) {
+      const alertRect = svgEl("rect", {
+        x: room.x, y: room.y, width: room.w, height: room.h, rx: 4, ry: 4,
+        "class": "room-alert-ring"
+      });
+      const alertTitle = svgEl("title");
+      alertTitle.textContent = "Active issue in this room";
+      alertRect.appendChild(alertTitle);
+      roomsG.appendChild(alertRect);
+
+      const badge = svgEl("g", {
+        "class": "room-alert-badge",
+        transform: "translate(" + (room.x + room.w - 20) + "," + (room.y + 6) + ")"
+      });
+      badge.innerHTML = ICON_SHAPES.active_issue;
+      badge.style.color = AGGREGATE_STATUS_META.active_issue.color;
+      const badgeTitle = svgEl("title");
+      badgeTitle.textContent = "Active issue";
+      badge.appendChild(badgeTitle);
+      roomsG.appendChild(badge);
+    }
   });
   svg.appendChild(roomsG);
 
@@ -333,8 +455,8 @@ function renderLegend() {
 
   const statusWrap = document.getElementById("legend-status");
   statusWrap.innerHTML = "";
-  Object.keys(STATUS_META).forEach(function (status) {
-    const meta = STATUS_META[status];
+  Object.keys(AGGREGATE_STATUS_META).forEach(function (status) {
+    const meta = AGGREGATE_STATUS_META[status];
     const item = document.createElement("span");
     item.className = "legend-item";
     const iconWrap = document.createElement("span");
@@ -351,7 +473,7 @@ function renderLegend() {
 
 // -------------------------------------------------------------- badges
 function buildStatusBadge(status) {
-  const meta = STATUS_META[status];
+  const meta = AGGREGATE_STATUS_META[status];
   const span = document.createElement("span");
   span.className = "status-badge";
   span.style.background = meta.color;
@@ -363,6 +485,14 @@ function buildStatusBadge(status) {
   return span;
 }
 
+function buildFindingStatusBadge(status) {
+  const meta = FINDING_STATE_META[status] || { label: status };
+  const span = document.createElement("span");
+  span.className = "finding-status-badge finding-status-" + status;
+  span.textContent = meta.label;
+  return span;
+}
+
 // -------------------------------------------------------------- roof grid
 function renderRoofGrid() {
   const grid = document.getElementById("roof-grid");
@@ -371,6 +501,7 @@ function renderRoofGrid() {
     const card = document.createElement("button");
     card.type = "button";
     card.className = "roof-card";
+    if (checkpointHasUnresolvedFinding(cp.id)) card.classList.add("roof-card-alert");
 
     const title = document.createElement("div");
     title.className = "roof-card-title";
@@ -397,6 +528,14 @@ function renderRoofGrid() {
     }
 
     card.appendChild(buildStatusBadge(computeAggregateStatus(cp)));
+
+    if (checkpointHasUnresolvedFinding(cp.id)) {
+      const alertRow = document.createElement("span");
+      alertRow.className = "finding-indicator finding-indicator-active";
+      alertRow.innerHTML = iconHTML("active_issue", 14) + "<span>Active issue</span>";
+      card.appendChild(alertRow);
+    }
+
     card.addEventListener("click", function () { openPanel(cp); });
     grid.appendChild(card);
   });
@@ -407,10 +546,135 @@ function refreshStatusesUI() {
   renderRoofGrid();
 }
 
+// -------------------------------------------------------------- update form
+// Shared "Log an update" form used both when the raw toggle is switched to
+// Attention (creating or re-using a finding) and when "Add update" is used on
+// an already-open finding. Saving is the only way the caller's promise
+// resolves; cancelling never mutates anything.
+function buildUpdateForm(opts) {
+  const wrap = document.createElement("div");
+  wrap.className = "update-form";
+
+  const title = document.createElement("div");
+  title.className = "update-form-title";
+  title.textContent = "Log an update";
+  wrap.appendChild(title);
+
+  const statusGroup = document.createElement("div");
+  statusGroup.className = "segmented update-status-group";
+  let chosen = opts.defaultStatus || "in_progress";
+  const buttons = [];
+  Object.keys(FINDING_STATE_META).forEach(function (val) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = FINDING_STATE_META[val].label;
+    if (val === chosen) b.classList.add("is-active");
+    b.addEventListener("click", function () {
+      chosen = val;
+      buttons.forEach(function (x) { x.el.classList.toggle("is-active", x.val === val); });
+    });
+    buttons.push({ val: val, el: b });
+    statusGroup.appendChild(b);
+  });
+  wrap.appendChild(statusGroup);
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "notes-input update-message-input";
+  textarea.rows = 3;
+  textarea.placeholder = "What's happening with this issue? (required)";
+  wrap.appendChild(textarea);
+
+  const err = document.createElement("div");
+  err.className = "save-error-note";
+  err.hidden = true;
+  wrap.appendChild(err);
+
+  const actions = document.createElement("div");
+  actions.className = "update-form-actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "btn";
+  saveBtn.textContent = "Save";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "btn";
+  cancelBtn.textContent = "Cancel";
+
+  saveBtn.addEventListener("click", function () {
+    const msg = textarea.value.trim();
+    if (!msg) {
+      err.textContent = "A message is required.";
+      err.hidden = false;
+      return;
+    }
+    err.hidden = true;
+    saveBtn.disabled = true;
+    cancelBtn.disabled = true;
+    Promise.resolve(opts.onSave(chosen, msg)).catch(function (e) {
+      console.error("Failed to save finding update:", e);
+      err.textContent = "Couldn't save — check your connection and try again.";
+      err.hidden = false;
+      saveBtn.disabled = false;
+      cancelBtn.disabled = false;
+    });
+  });
+  cancelBtn.addEventListener("click", function () { opts.onCancel(); });
+
+  actions.appendChild(saveBtn);
+  actions.appendChild(cancelBtn);
+  wrap.appendChild(actions);
+
+  return wrap;
+}
+
+// Read-only, newest-first rendering of a finding's update history. Reused by
+// the in-panel indicator and the Findings page.
+function renderFindingTimeline(container, findingId) {
+  container.innerHTML = "";
+  const updates = UPDATES_BY_FINDING[findingId] || [];
+  const list = document.createElement("div");
+  list.className = "finding-timeline";
+  updates.forEach(function (u) {
+    const entry = document.createElement("div");
+    entry.className = "finding-timeline-entry";
+    const meta = document.createElement("div");
+    meta.className = "finding-timeline-meta";
+    const ts = document.createElement("span");
+    ts.className = "finding-timeline-time";
+    ts.textContent = new Date(u.created_at).toLocaleString();
+    meta.appendChild(ts);
+    meta.appendChild(buildFindingStatusBadge(u.status));
+    entry.appendChild(meta);
+    const msg = document.createElement("div");
+    msg.className = "finding-timeline-message";
+    msg.textContent = u.message;
+    entry.appendChild(msg);
+    list.appendChild(entry);
+  });
+  container.appendChild(list);
+}
+
+// Saves a finding update (creating a new finding if none is unresolved yet)
+// and, when alsoLogToggle is true, also appends a checklist_log row so the
+// raw toggle reflects "Attention" and the change shows up in the Daily Log.
+function saveFindingUpdate(checkpointId, itemKey, existingFinding, status, message, alsoLogToggle, notes) {
+  const findingPromise = existingFinding
+    ? ChecklistStore.addFindingUpdate(existingFinding.id, status, message)
+    : ChecklistStore.createFinding(checkpointId, itemKey, status, message);
+
+  return findingPromise.then(function (result) {
+    applyFindingResult(result.finding, result.update);
+    if (!alsoLogToggle) return;
+    return ChecklistStore.appendLogEntry(checkpointId, itemKey, "attention", null, notes || "")
+      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); });
+  });
+}
+
 // -------------------------------------------------------------- panel content
-function buildSegmented(currentState, onChange) {
+function buildSegmented(currentState, onClick) {
   const wrap = document.createElement("div");
   wrap.className = "segmented";
+  const buttons = {};
   ITEM_STATES.forEach(function (state) {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -418,22 +682,21 @@ function buildSegmented(currentState, onChange) {
     if (state === currentState) btn.classList.add("is-active");
     btn.innerHTML = iconHTML(state, 13);
     const lbl = document.createElement("span");
-    lbl.textContent = STATUS_META[state].label;
+    lbl.textContent = ITEM_STATE_META[state].label;
     btn.appendChild(lbl);
-    btn.addEventListener("click", function () {
-      wrap.querySelectorAll("button").forEach(function (b) {
-        b.classList.toggle("is-active", b === btn);
-      });
-      onChange(state);
-    });
+    btn.addEventListener("click", function () { onClick(state); });
+    buttons[state] = btn;
     wrap.appendChild(btn);
   });
+  wrap.setActive = function (state) {
+    Object.keys(buttons).forEach(function (s) { buttons[s].classList.toggle("is-active", s === state); });
+  };
   return wrap;
 }
 
 function buildCheckRow(checkpoint, checklistItem) {
-  const groupData = getGroupEntries(checkpoint.id);
-  const current = groupData[checklistItem.item] || { state: "not-checked", notes: "" };
+  const itemKey = checklistItem.item;
+  const current = getGroupEntries(checkpoint.id)[itemKey] || { state: "not_checked", notes: "" };
 
   const row = document.createElement("div");
   row.className = "check-row";
@@ -460,14 +723,39 @@ function buildCheckRow(checkpoint, checklistItem) {
   saveError.textContent = "Couldn't save — check your connection and try again.";
   saveError.hidden = true;
 
+  // formMode: null (no form open) | { kind: "new" } (opening via the raw
+  // Attention click when no unresolved finding exists yet — will create a
+  // finding) | { kind: "append", finding, alsoLogToggle } (opening via the
+  // raw Attention click while an unresolved finding ALREADY exists — must
+  // append to that SAME finding, never create a second one — or via the
+  // "Add update" button on an already-open finding).
+  let formMode = null;
+  let expanded = false;
+
   const segmented = buildSegmented(current.state, function (newState) {
-    const prevNotes = (getGroupEntries(checkpoint.id)[checklistItem.item] || {}).notes || "";
-    setGroupEntryLocal(checkpoint.id, checklistItem.item, newState, prevNotes);
+    if (newState === "attention") {
+      // Selecting Attention never half-applies — it only opens the form.
+      // The toggle's active class is NOT changed until Save succeeds. If
+      // this item already has an unresolved finding, re-use it (append)
+      // instead of opening a brand-new one — there is at most one
+      // unresolved finding per checkpoint+item at a time.
+      const info = getItemFindingInfo(checkpoint.id, itemKey);
+      formMode = info.unresolved
+        ? { kind: "append", finding: info.unresolved, alsoLogToggle: true }
+        : { kind: "new" };
+      expanded = true;
+      renderFindingArea();
+      return;
+    }
+    segmented.setActive(newState);
+    const prevNotes = (getGroupEntries(checkpoint.id)[itemKey] || {}).notes || "";
+    setGroupEntryLocal(checkpoint.id, itemKey, newState, prevNotes);
     refreshStatusesUI();
     saveError.hidden = true;
-    ChecklistStore.saveGroupItem(checkpoint.id, checklistItem.item, stateToDbStatus(newState), prevNotes)
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, newState, null, prevNotes)
+      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
       .catch(function (err) {
-        console.error("Failed to save checklist item to Supabase:", checkpoint.id, checklistItem.item, err);
+        console.error("Failed to save checklist item to Supabase:", checkpoint.id, itemKey, err);
         saveError.hidden = false;
       });
   });
@@ -480,18 +768,97 @@ function buildCheckRow(checkpoint, checklistItem) {
   notesInput.placeholder = "Notes / actual reading";
   notesInput.value = current.notes || "";
   const saveNotes = debounce(function () {
-    const stateNow = (getGroupEntries(checkpoint.id)[checklistItem.item] || {}).state || "not-checked";
-    setGroupEntryLocal(checkpoint.id, checklistItem.item, stateNow, notesInput.value);
+    const stateNow = (getGroupEntries(checkpoint.id)[itemKey] || {}).state || "not_checked";
+    setGroupEntryLocal(checkpoint.id, itemKey, stateNow, notesInput.value);
     saveError.hidden = true;
-    ChecklistStore.saveGroupItem(checkpoint.id, checklistItem.item, stateToDbStatus(stateNow), notesInput.value)
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, stateNow, null, notesInput.value)
+      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
       .catch(function (err) {
-        console.error("Failed to save checklist notes to Supabase:", checkpoint.id, checklistItem.item, err);
+        console.error("Failed to save checklist notes to Supabase:", checkpoint.id, itemKey, err);
         saveError.hidden = false;
       });
   }, 400);
   notesInput.addEventListener("input", saveNotes);
   row.appendChild(notesInput);
   row.appendChild(saveError);
+
+  const findingArea = document.createElement("div");
+  findingArea.className = "finding-area";
+  row.appendChild(findingArea);
+
+  function renderFindingArea() {
+    findingArea.innerHTML = "";
+    const info = getItemFindingInfo(checkpoint.id, itemKey);
+
+    if (formMode !== null) {
+      const isNew = formMode.kind === "new";
+      const targetFinding = isNew ? null : formMode.finding;
+      const alsoLogToggle = isNew ? true : !!formMode.alsoLogToggle;
+      const formEl = buildUpdateForm({
+        defaultStatus: "in_progress",
+        onSave: function (status, message) {
+          return saveFindingUpdate(checkpoint.id, itemKey, targetFinding, status, message, alsoLogToggle, notesInput.value)
+            .then(function () {
+              formMode = null;
+              expanded = true;
+              if (alsoLogToggle) {
+                segmented.setActive("attention");
+                setGroupEntryLocal(checkpoint.id, itemKey, "attention", notesInput.value);
+              }
+              // Always refresh markers/roof cards — a finding's resolution
+              // status (and thus the pulsating active-issue indicator) can
+              // change here even when alsoLogToggle is false (e.g. adding a
+              // second update, or resolving via "Add update").
+              refreshStatusesUI();
+              renderFindingArea();
+            });
+        },
+        onCancel: function () {
+          formMode = null;
+          renderFindingArea();
+        }
+      });
+      findingArea.appendChild(formEl);
+      return;
+    }
+
+    const finding = info.unresolved || info.mostRecent;
+    if (!finding) return;
+    const isUnresolved = !!info.unresolved;
+    const count = (UPDATES_BY_FINDING[finding.id] || []).length;
+
+    const badge = document.createElement("button");
+    badge.type = "button";
+    badge.className = "finding-indicator " + (isUnresolved ? "finding-indicator-active" : "finding-indicator-resolved");
+    badge.innerHTML = (isUnresolved ? iconHTML("active_issue", 14) : iconHTML("resolved_issue", 14)) +
+      "<span>" + (isUnresolved ? "Active issue" : "Resolved") + " — " + count + " update" + (count === 1 ? "" : "s") + "</span>";
+    badge.addEventListener("click", function () {
+      expanded = !expanded;
+      renderFindingArea();
+    });
+    findingArea.appendChild(badge);
+
+    if (expanded) {
+      const timelineWrap = document.createElement("div");
+      timelineWrap.className = "finding-timeline-wrap";
+      renderFindingTimeline(timelineWrap, finding.id);
+      findingArea.appendChild(timelineWrap);
+
+      if (isUnresolved) {
+        const addBtn = document.createElement("button");
+        addBtn.type = "button";
+        addBtn.className = "btn finding-add-update-btn";
+        addBtn.textContent = "Add update";
+        addBtn.addEventListener("click", function () {
+          formMode = { kind: "append", finding: finding, alsoLogToggle: false };
+          renderFindingArea();
+        });
+        findingArea.appendChild(addBtn);
+      }
+    }
+  }
+
+  renderFindingArea();
 
   return row;
 }
@@ -510,6 +877,7 @@ function buildUnitsSection(units) {
 
 function buildSubRow(checkpoint, sub) {
   const stored = getSubEntry(checkpoint.id, sub.designation);
+  const itemKey = "sub:" + sub.designation;
 
   const row = document.createElement("div");
   row.className = "sub-row";
@@ -521,12 +889,6 @@ function buildSubRow(checkpoint, sub) {
   const desigLine = document.createElement("div");
   desigLine.className = "sub-row-designation";
   desigLine.textContent = "Compressor " + sub.designation;
-  if (sub.override) {
-    const fault = document.createElement("span");
-    fault.className = "sub-row-fault";
-    fault.textContent = "  ⚠ FAULT: " + sub.override;
-    desigLine.appendChild(fault);
-  }
   left.appendChild(desigLine);
 
   const modelLine = document.createElement("div");
@@ -565,7 +927,8 @@ function buildSubRow(checkpoint, sub) {
     setSubEntryLocal(checkpoint.id, sub.designation, select.value, existingNotes);
     refreshStatusesUI();
     saveError.hidden = true;
-    ChecklistStore.saveSubsection(checkpoint.id, sub.designation, oilLocalToDb(select.value), existingNotes)
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(select.value), existingNotes)
+      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
       .catch(function (err) {
         console.error("Failed to save oil level to Supabase:", checkpoint.id, sub.designation, err);
         saveError.hidden = false;
@@ -582,7 +945,8 @@ function buildSubRow(checkpoint, sub) {
     const existingOil = getSubEntry(checkpoint.id, sub.designation).oilLevel;
     setSubEntryLocal(checkpoint.id, sub.designation, existingOil, notesInput.value);
     saveError.hidden = true;
-    ChecklistStore.saveSubsection(checkpoint.id, sub.designation, oilLocalToDb(existingOil), notesInput.value)
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(existingOil), notesInput.value)
+      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
       .catch(function (err) {
         console.error("Failed to save compressor notes to Supabase:", checkpoint.id, sub.designation, err);
         saveError.hidden = false;
@@ -593,13 +957,6 @@ function buildSubRow(checkpoint, sub) {
 
   row.appendChild(controls);
   row.appendChild(saveError);
-
-  if (sub.override && sub.notes) {
-    const staticNote = document.createElement("div");
-    staticNote.className = "check-row-expected";
-    staticNote.textContent = "Sheet note: " + sub.notes;
-    row.appendChild(staticNote);
-  }
 
   return row;
 }
@@ -630,26 +987,6 @@ function buildPanelBody(checkpoint) {
   const body = document.getElementById("panel-body");
   body.innerHTML = "";
 
-  const overrideSub = (checkpoint.subsections || []).find(function (s) { return !!s.override; });
-  if (overrideSub) {
-    const banner = document.createElement("div");
-    banner.className = "deficiency-banner";
-    banner.innerHTML = iconHTML("critical", 20);
-    const bodyWrap = document.createElement("div");
-    bodyWrap.className = "db-body";
-    const titleEl = document.createElement("div");
-    titleEl.textContent = "Known deficiency — Compressor " + overrideSub.designation + ": " + overrideSub.override;
-    bodyWrap.appendChild(titleEl);
-    if (overrideSub.notes) {
-      const notesEl = document.createElement("div");
-      notesEl.className = "db-notes";
-      notesEl.textContent = overrideSub.notes;
-      bodyWrap.appendChild(notesEl);
-    }
-    banner.appendChild(bodyWrap);
-    body.appendChild(banner);
-  }
-
   sectionTitle(body, "Equipment Info");
   infoRow(body, "Location", checkpoint.location);
   const room = ROOMS_BY_ID[checkpoint.roomKey];
@@ -658,7 +995,7 @@ function buildPanelBody(checkpoint) {
   if (checkpoint.roomConfidence === "assumed") {
     const note = document.createElement("div");
     note.className = "assumed-note";
-    note.innerHTML = iconHTML("warning", 13) + "<span>Assumed placement — confirm on-site</span>";
+    note.innerHTML = iconHTML("attention", 13) + "<span>Assumed placement — confirm on-site</span>";
     body.appendChild(note);
   }
 
@@ -703,29 +1040,236 @@ function closePanel() {
   document.getElementById("backdrop").classList.remove("is-open");
 }
 
+// -------------------------------------------------------------- daily log page
+function localDateInputValue(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return y + "-" + m + "-" + day;
+}
+
+function buildMergedDailyEntries() {
+  const entries = [];
+  LOG_ROWS.forEach(function (row) {
+    if (!row || !row.created_at) return;
+    entries.push({
+      ts: new Date(row.created_at),
+      checkpointId: row.checkpoint_id,
+      itemKey: row.item_key,
+      kind: "log",
+      status: row.status,
+      oilLevel: row.oil_level,
+      notes: row.notes
+    });
+  });
+  FINDING_UPDATES_LIST.forEach(function (u) {
+    const finding = FINDINGS_BY_ID[u.finding_id];
+    if (!finding || !u.created_at) return;
+    entries.push({
+      ts: new Date(u.created_at),
+      checkpointId: finding.checkpoint_id,
+      itemKey: finding.item_key,
+      kind: "finding_update",
+      status: u.status,
+      notes: u.message
+    });
+  });
+  return entries;
+}
+
+function buildDailyLogRow(entry) {
+  const cp = EQUIPMENT_BY_ID[entry.checkpointId];
+  const row = document.createElement("div");
+  row.className = "log-row";
+
+  const timeEl = document.createElement("div");
+  timeEl.className = "log-row-time";
+  timeEl.textContent = entry.ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  row.appendChild(timeEl);
+
+  const mainEl = document.createElement("div");
+  mainEl.className = "log-row-main";
+
+  const eqLine = document.createElement("div");
+  eqLine.className = "log-row-equipment";
+  eqLine.textContent = cp
+    ? (cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "") + " — " + cp.location)
+    : entry.checkpointId;
+  mainEl.appendChild(eqLine);
+
+  const itemLine = document.createElement("div");
+  itemLine.className = "log-row-item";
+  itemLine.textContent = itemDisplayName(cp, entry.itemKey);
+  mainEl.appendChild(itemLine);
+
+  const valueLine = document.createElement("div");
+  valueLine.className = "log-row-value";
+  if (entry.kind === "log") {
+    if (entry.itemKey && entry.itemKey.indexOf("sub:") === 0) {
+      valueLine.textContent = "Oil level: " + (entry.oilLevel || "—");
+    } else {
+      const meta = ITEM_STATE_META[entry.status || "not_checked"] || { label: entry.status };
+      valueLine.textContent = "Status: " + meta.label;
+    }
+  } else {
+    const meta = FINDING_STATE_META[entry.status] || { label: entry.status };
+    valueLine.textContent = "Finding update: " + meta.label;
+  }
+  mainEl.appendChild(valueLine);
+
+  if (entry.notes) {
+    const notesLine = document.createElement("div");
+    notesLine.className = "log-row-notes";
+    notesLine.textContent = entry.notes;
+    mainEl.appendChild(notesLine);
+  }
+
+  row.appendChild(mainEl);
+  return row;
+}
+
+function renderDailyLogView() {
+  const feed = document.getElementById("daily-log-feed");
+  const dateInput = document.getElementById("log-date-input");
+  if (!feed || !dateInput) return;
+  const dateVal = dateInput.value;
+  feed.innerHTML = "";
+  if (!dateVal) return;
+
+  const entries = buildMergedDailyEntries().filter(function (e) {
+    return localDateInputValue(e.ts) === dateVal;
+  });
+  entries.sort(function (a, b) { return b.ts - a.ts; });
+
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No activity logged for this day.";
+    feed.appendChild(empty);
+    return;
+  }
+
+  entries.forEach(function (e) { feed.appendChild(buildDailyLogRow(e)); });
+}
+
+function wireDailyLogControls() {
+  const input = document.getElementById("log-date-input");
+  if (!input) return;
+  input.value = localDateInputValue(new Date());
+  input.addEventListener("change", renderDailyLogView);
+}
+
+// -------------------------------------------------------------- findings page
+let findingsFilter = "active";
+
+function buildFindingCard(finding) {
+  const cp = EQUIPMENT_BY_ID[finding.checkpoint_id];
+  const card = document.createElement("div");
+  card.className = "finding-card";
+
+  const head = document.createElement("div");
+  head.className = "finding-card-head";
+  const titleWrap = document.createElement("div");
+  const title = document.createElement("div");
+  title.className = "finding-card-title";
+  title.textContent = cp ? (cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "")) : finding.checkpoint_id;
+  titleWrap.appendChild(title);
+  const loc = document.createElement("div");
+  loc.className = "finding-card-meta";
+  loc.textContent = cp ? cp.location : "";
+  titleWrap.appendChild(loc);
+  const item = document.createElement("div");
+  item.className = "finding-card-meta";
+  item.textContent = itemDisplayName(cp, finding.item_key);
+  titleWrap.appendChild(item);
+  head.appendChild(titleWrap);
+  head.appendChild(buildFindingStatusBadge(finding.status));
+  card.appendChild(head);
+
+  const opened = document.createElement("div");
+  opened.className = "finding-card-meta";
+  opened.textContent = "Opened " + new Date(finding.opened_at).toLocaleString();
+  card.appendChild(opened);
+
+  if (finding.resolved_at) {
+    const resolved = document.createElement("div");
+    resolved.className = "finding-card-meta";
+    resolved.textContent = "Resolved " + new Date(finding.resolved_at).toLocaleString();
+    card.appendChild(resolved);
+  }
+
+  const timelineWrap = document.createElement("div");
+  timelineWrap.className = "finding-timeline-wrap";
+  renderFindingTimeline(timelineWrap, finding.id);
+  card.appendChild(timelineWrap);
+
+  return card;
+}
+
+function renderFindingsView() {
+  const list = document.getElementById("findings-list");
+  if (!list) return;
+  list.innerHTML = "";
+
+  let items = FINDINGS_LIST.slice();
+  if (findingsFilter === "active") items = items.filter(function (f) { return f.status !== "resolved"; });
+  else if (findingsFilter === "resolved") items = items.filter(function (f) { return f.status === "resolved"; });
+  items.sort(function (a, b) { return new Date(b.opened_at) - new Date(a.opened_at); });
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = findingsFilter === "active"
+      ? "No active findings — nothing currently being tracked."
+      : "No findings match this filter.";
+    list.appendChild(empty);
+    return;
+  }
+
+  items.forEach(function (f) { list.appendChild(buildFindingCard(f)); });
+}
+
+function wireFindingsControls() {
+  const wrap = document.getElementById("findings-filter");
+  if (!wrap) return;
+  wrap.querySelectorAll("button").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      findingsFilter = btn.dataset.filter;
+      wrap.querySelectorAll("button").forEach(function (b) { b.classList.toggle("is-active", b === btn); });
+      renderFindingsView();
+    });
+  });
+}
+
 // -------------------------------------------------------------- header / tabs
+const TAB_IDS = ["floor", "roof", "log", "findings"];
+
 function switchTab(which) {
-  const isFloor = which === "floor";
-  document.getElementById("tab-floor").classList.toggle("is-active", isFloor);
-  document.getElementById("tab-roof").classList.toggle("is-active", !isFloor);
-  document.getElementById("tab-floor").setAttribute("aria-selected", String(isFloor));
-  document.getElementById("tab-roof").setAttribute("aria-selected", String(!isFloor));
-  document.getElementById("view-floor").classList.toggle("is-active", isFloor);
-  document.getElementById("view-roof").classList.toggle("is-active", !isFloor);
+  TAB_IDS.forEach(function (id) {
+    const isActive = id === which;
+    document.getElementById("tab-" + id).classList.toggle("is-active", isActive);
+    document.getElementById("tab-" + id).setAttribute("aria-selected", String(isActive));
+    document.getElementById("view-" + id).classList.toggle("is-active", isActive);
+  });
+  if (which === "log") renderDailyLogView();
+  if (which === "findings") renderFindingsView();
 }
 
 function wireHeaderControls() {
-  document.getElementById("tab-floor").addEventListener("click", function () { switchTab("floor"); });
-  document.getElementById("tab-roof").addEventListener("click", function () { switchTab("roof"); });
+  TAB_IDS.forEach(function (id) {
+    document.getElementById("tab-" + id).addEventListener("click", function () { switchTab(id); });
+  });
   document.getElementById("btn-reset").addEventListener("click", function () {
-    const ok = confirm("Reset ALL recorded checklist entries for everyone using this dashboard? This cannot be undone.");
+    const ok = confirm("Reset ALL recorded checklist entries and findings for everyone using this dashboard? This cannot be undone.");
     if (!ok) return;
     ChecklistStore.resetAll()
       .then(function () {
-        CACHE.group = {};
-        CACHE.sub = {};
+        ingestLog([]);
+        ingestFindings([], []);
         closePanel();
         refreshStatusesUI();
+        renderDailyLogView();
+        renderFindingsView();
       })
       .catch(function (err) {
         console.error("ChecklistStore.resetAll failed:", err);
@@ -767,8 +1311,10 @@ async function init() {
   wireHeaderControls();
   wirePanelControls();
   wireLoadBanner();
+  wireDailyLogControls();
+  wireFindingsControls();
 
-  // Render immediately against an empty cache (-> everything "not-checked")
+  // Render immediately against an empty cache (-> everything "not_checked")
   // so the UI is never blank/broken while the initial Supabase load is in
   // flight — this doubles as the "loading" state for the map/roof grid.
   renderFloorSVG();
@@ -776,14 +1322,17 @@ async function init() {
 
   setLoadingIndicator(true);
   try {
-    const rows = await ChecklistStore.loadAll();
-    ingestRows(rows);
+    const bundle = await ChecklistStore.loadAll();
+    ingestLog(bundle.log);
+    ingestFindings(bundle.findings, bundle.findingUpdates);
   } catch (err) {
     console.error("ChecklistStore.loadAll failed:", err);
     showLoadErrorBanner();
   } finally {
     setLoadingIndicator(false);
     refreshStatusesUI();
+    renderDailyLogView();
+    renderFindingsView();
   }
 }
 

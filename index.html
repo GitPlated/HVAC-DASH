@@ -18,6 +18,8 @@
     <div class="view-tabs" role="tablist" aria-label="Dashboard view">
       <button type="button" class="view-tab is-active" id="tab-floor" role="tab" aria-selected="true">Floor Plan</button>
       <button type="button" class="view-tab" id="tab-roof" role="tab" aria-selected="false">Roof Level</button>
+      <button type="button" class="view-tab" id="tab-log" role="tab" aria-selected="false">Daily Log</button>
+      <button type="button" class="view-tab" id="tab-findings" role="tab" aria-selected="false">Findings</button>
     </div>
     <button type="button" class="btn btn-danger" id="btn-reset">Reset all entries</button>
   </div>
@@ -52,6 +54,27 @@
   <section class="view-section" id="view-roof">
     <p class="hint-text">Roof-mounted equipment isn't on the interior floor plan. Click a card to open its checklist.</p>
     <div class="roof-grid" id="roof-grid"></div>
+  </section>
+
+  <section class="view-section" id="view-log">
+    <p class="hint-text">Every status change and reading, newest first. Browse other days with the date picker.</p>
+    <div class="log-controls">
+      <label class="log-date-label" for="log-date-input">Date</label>
+      <input type="date" id="log-date-input" class="log-date-input">
+    </div>
+    <div class="daily-log-feed" id="daily-log-feed"></div>
+  </section>
+
+  <section class="view-section" id="view-findings">
+    <p class="hint-text">Issues opened from an "Attention" checklist entry, tracked to resolution.</p>
+    <div class="findings-controls">
+      <div class="segmented" id="findings-filter" role="group" aria-label="Filter findings">
+        <button type="button" data-filter="active" class="is-active">Active</button>
+        <button type="button" data-filter="resolved">Resolved</button>
+        <button type="button" data-filter="all">All</button>
+      </div>
+    </div>
+    <div class="findings-list" id="findings-list"></div>
   </section>
 </main>
 

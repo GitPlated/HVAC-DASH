@@ -61,12 +61,7 @@ const EQUIPMENT_GROUPS = [
       { designation: "2", model: "Rack B Compressor - 4FE28" },
       { designation: "3", model: "Rack B Compressor - 4FE28" },
       { designation: "4", model: "Rack B Compressor - 4FE28" },
-      {
-        designation: "5",
-        model: "Rack B Compressor - 4FE-28-2NU / 2500695626",
-        override: "BAD COMPRESSOR / NOT IN SERVICE",
-        notes: "Working with AMS for replacement"
-      },
+      { designation: "5", model: "Rack B Compressor - 4FE-28-2NU / 2500695626" },
       { designation: "6", model: "Rack B Compressor - 4FE28" },
       { designation: "7", model: "Rack B Compressor - 4FE28" },
       { designation: "8", model: "Rack B Compressor - 4FE28" }
