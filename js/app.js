@@ -1315,33 +1315,105 @@ function wireFindingsControls() {
 }
 
 // -------------------------------------------------------------- overview page
-// One unit block per checkable item in the whole facility: every groupChecklist
-// entry across every EQUIPMENT_GROUPS checkpoint (floor + roof), plus every
-// rack compressor subsection (oil level). Classified into exactly 3 buckets —
-// see the in-line rules below — and always recomputed live from CACHE/
-// FINDINGS_BY_ITEM, never hardcoded.
-function computeOverviewCounts() {
+// Per-day stacked bar chart: one bar per local-calendar day (last 7 days,
+// ending today), each bar a cumulative-as-of-end-of-that-day snapshot across
+// every checkable item in the whole facility — every groupChecklist entry
+// across every EQUIPMENT_GROUPS checkpoint (floor + roof), plus every rack
+// compressor subsection (oil level). Classified into exactly 3 buckets per
+// day — see classifyItemAsOf() below — so every bar's three segments sum to
+// the same total (currently 67) even on the earliest day. Always recomputed
+// live from LOG_ROWS/FINDINGS_BY_ITEM, never hardcoded.
+
+const OVERVIEW_DAY_COUNT = 7;
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// Reuses the same local-calendar-day convention as the Daily Log's
+// localDateInputValue() (getFullYear/getMonth/getDate — local, not UTC) —
+// just formatted for a short axis label instead of a <input type=date> value.
+function shortDayLabel(d) {
+  return WEEKDAY_SHORT[d.getDay()] + " " + (d.getMonth() + 1) + "/" + d.getDate();
+}
+
+// Midnight, local time, for the given Date (day-only, time stripped).
+function localDayStart(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+// The last N local-calendar days ending today (today last, oldest first).
+function lastNLocalDays(n) {
+  const today = localDayStart(new Date());
+  const days = [];
+  for (let i = n - 1; i >= 0; i--) {
+    days.push(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i));
+  }
+  return days;
+}
+
+// End-of-day cutoff (23:59:59.999 local) as an epoch ms number — "on or
+// before day D" for a given local calendar day D.
+function localDayEndMs(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+}
+
+// checkpoint_id::item_key -> checklist_log rows for that pair, sorted
+// ascending by created_at. Built once per render and reused across all 7
+// day-cutoffs instead of re-filtering LOG_ROWS from scratch each time.
+function buildLogRowsByItem() {
+  const idx = {};
+  LOG_ROWS.forEach(function (row) {
+    if (!row || !row.checkpoint_id || !row.item_key) return;
+    const key = row.checkpoint_id + "::" + row.item_key;
+    if (!idx[key]) idx[key] = [];
+    idx[key].push(row);
+  });
+  Object.keys(idx).forEach(function (key) {
+    idx[key].sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); });
+  });
+  return idx;
+}
+
+// Classifies a single checkable item as of the END of local day D (cutoffMs
+// = localDayEndMs(D)) — see the task's exact rules:
+//   - rack subsection ("sub:" item_key): green if ANY log row by cutoff,
+//     else grey. Never red (no findings concept for subsections).
+//   - group checklist item: red if ANY finding opened_at <= cutoff (counts
+//     forever, even once resolved). Else green if the latest log row by
+//     cutoff has status "ok". Else grey (not_checked, or never logged yet).
+function classifyItemAsOf(logIndex, checkpointId, itemKey, cutoffMs, isSub) {
+  const rows = logIndex[checkpointId + "::" + itemKey] || [];
+  if (isSub) {
+    const hasAny = rows.some(function (r) { return new Date(r.created_at).getTime() <= cutoffMs; });
+    return hasAny ? "green" : "grey";
+  }
+
+  const findings = FINDINGS_BY_ITEM[checkpointId + "::" + itemKey] || [];
+  const hasFindingByCutoff = findings.some(function (f) { return new Date(f.opened_at).getTime() <= cutoffMs; });
+  if (hasFindingByCutoff) return "red";
+
+  // rows is ascending by created_at — the last one at or before the cutoff
+  // is the latest-as-of-that-day value.
+  let latest = null;
+  for (let i = 0; i < rows.length; i++) {
+    const t = new Date(rows[i].created_at).getTime();
+    if (t <= cutoffMs) latest = rows[i]; else break;
+  }
+  if (latest && latest.status === "ok") return "green";
+  return "grey";
+}
+
+function computeOverviewCountsAsOf(logIndex, cutoffMs) {
   let grey = 0, green = 0, red = 0;
 
   EQUIPMENT_GROUPS.forEach(function (cp) {
-    const groupData = getGroupEntries(cp.id);
     (cp.groupChecklist || []).forEach(function (ci) {
-      const entry = groupData[ci.item];
-      const state = entry ? entry.state : "not_checked";
-      const info = getItemFindingInfo(cp.id, ci.item);
-      const hasAnyFinding = info.all && info.all.length > 0;
-      // Red (any finding, resolved or not) takes precedence over green/grey —
-      // this histogram answers "how many things needed attention", not just
-      // "what's currently on fire".
-      if (hasAnyFinding) red++;
-      else if (state === "ok") green++;
-      else grey++; // not_checked, or never logged at all
+      const bucket = classifyItemAsOf(logIndex, cp.id, ci.item, cutoffMs, false);
+      if (bucket === "red") red++;
+      else if (bucket === "green") green++;
+      else grey++;
     });
     (cp.subsections || []).forEach(function (s) {
-      // Subsections (compressor oil level) never have a findings concept —
-      // any recorded reading at all is green, otherwise grey.
-      const sub = getSubEntry(cp.id, s.designation);
-      if (sub.oilLevel) green++;
+      const bucket = classifyItemAsOf(logIndex, cp.id, "sub:" + s.designation, cutoffMs, true);
+      if (bucket === "green") green++;
       else grey++;
     });
   });
@@ -1349,35 +1421,184 @@ function computeOverviewCounts() {
   return { grey: grey, green: green, red: red, total: grey + green + red };
 }
 
+// One entry per day: { day: Date, label: "Wed 7/8", counts: {grey,green,red,total} }.
+function computeOverviewSeries() {
+  const logIndex = buildLogRowsByItem();
+  return lastNLocalDays(OVERVIEW_DAY_COUNT).map(function (day) {
+    return {
+      day: day,
+      label: shortDayLabel(day),
+      counts: computeOverviewCountsAsOf(logIndex, localDayEndMs(day))
+    };
+  });
+}
+
+// Round, clean axis ceiling — a multiple of a "nice" step (5/10/20/50) at or
+// just above the total item count, so gridlines land on 0/10/20/... rather
+// than raw fractions. For the current 67-item facility this yields ticks at
+// 0/10/20/30/40/50/60/70.
+function niceAxisStep(total) {
+  if (total <= 20) return 2;
+  if (total <= 40) return 5;
+  if (total <= 70) return 10;
+  if (total <= 150) return 20;
+  return 50;
+}
+
+const OVERVIEW_SEGMENT_ORDER = [
+  { key: "red", label: "Resulted in a finding", colorVar: "var(--status-critical)", iconStatus: "active_issue" },
+  { key: "grey", label: "Not checked", colorVar: "var(--status-notchecked)", iconStatus: "not_checked" },
+  { key: "green", label: "Checked — OK", colorVar: "var(--status-good)", iconStatus: "ok" }
+];
+
+let overviewTooltipHideTimer = null;
+
+function showOverviewTooltip(targetEl, dayLabel, catLabel, count) {
+  const wrap = document.getElementById("overview-chart-wrap");
+  const tip = document.getElementById("overview-chart-tooltip");
+  if (!wrap || !tip) return;
+  clearTimeout(overviewTooltipHideTimer);
+
+  tip.innerHTML = "";
+  const valueEl = document.createElement("div");
+  valueEl.className = "tooltip-value";
+  valueEl.textContent = count + (count === 1 ? " item" : " items");
+  const catEl = document.createElement("div");
+  catEl.className = "tooltip-cat";
+  catEl.textContent = catLabel;
+  const dayEl = document.createElement("div");
+  dayEl.className = "tooltip-day";
+  dayEl.textContent = dayLabel;
+  tip.appendChild(valueEl);
+  tip.appendChild(catEl);
+  tip.appendChild(dayEl);
+
+  const wrapRect = wrap.getBoundingClientRect();
+  const targetRect = targetEl.getBoundingClientRect();
+  tip.hidden = false;
+  tip.style.left = (targetRect.left - wrapRect.left + targetRect.width / 2 + wrap.scrollLeft) + "px";
+  tip.style.top = (targetRect.top - wrapRect.top + wrap.scrollTop) + "px";
+}
+
+function hideOverviewTooltip() {
+  const tip = document.getElementById("overview-chart-tooltip");
+  if (!tip) return;
+  // Tiny delay avoids a flash-hide when focus/hover moves directly from one
+  // segment to its immediate neighbor.
+  overviewTooltipHideTimer = setTimeout(function () { tip.hidden = true; }, 40);
+}
+
+// Builds the hand-rolled SVG stacked bar chart (no chart library). Y axis is
+// item count with hairline gridlines at round-number ticks; X axis is the
+// last 7 local days, oldest on the left. Stacking order is identical on
+// every bar — red anchored at the baseline (easiest to compare day to day),
+// grey in the middle, green on top — with a 2px surface-color gap (i.e. just
+// unpainted space showing the panel background) separating segments within
+// a bar, and air between neighboring bars so they never touch.
+function renderOverviewChart(series) {
+  const svg = document.getElementById("overview-chart-svg");
+  if (!svg) return;
+  svg.innerHTML = "";
+
+  const total = series[0].counts.total || 1;
+  const axisStep = niceAxisStep(total);
+  const axisMax = Math.ceil(total / axisStep) * axisStep;
+
+  const W = 760, H = 360;
+  const marginLeft = 40, marginRight = 14, marginTop = 14, marginBottom = 38;
+  const plotW = W - marginLeft - marginRight;
+  const plotH = H - marginTop - marginBottom;
+  const plotBottom = marginTop + plotH;
+  const unitPx = plotH / axisMax;
+  const gapPx = 2;
+
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.setAttribute("preserveAspectRatio", "xMinYMin meet");
+
+  const titleEl = svgEl("title");
+  titleEl.textContent = "Checklist item status, last " + series.length + " days, by day.";
+  svg.appendChild(titleEl);
+
+  // ---- gridlines + y-axis tick labels
+  const gridG = svgEl("g", { "class": "chart-grid-layer" });
+  for (let tick = 0; tick <= axisMax; tick += axisStep) {
+    const y = plotBottom - tick * unitPx;
+    gridG.appendChild(svgEl("line", {
+      x1: marginLeft, x2: marginLeft + plotW, y1: y, y2: y,
+      "class": "chart-gridline", "vector-effect": "non-scaling-stroke"
+    }));
+    const label = svgEl("text", {
+      x: marginLeft - 8, y: y, "text-anchor": "end", "dominant-baseline": "middle",
+      "class": "chart-axis-label"
+    });
+    label.textContent = String(tick);
+    gridG.appendChild(label);
+  }
+  svg.appendChild(gridG);
+
+  // ---- bars
+  const barsG = svgEl("g", { "class": "chart-bars-layer" });
+  const slot = plotW / series.length;
+  const barWidth = Math.min(56, slot * 0.5);
+
+  series.forEach(function (entry, i) {
+    const xCenter = marginLeft + slot * i + slot / 2;
+    const barX = xCenter - barWidth / 2;
+
+    let cursorY = plotBottom;
+    let drawnAny = false;
+    OVERVIEW_SEGMENT_ORDER.forEach(function (seg) {
+      const count = entry.counts[seg.key] || 0;
+      if (count <= 0) return;
+      if (drawnAny) cursorY -= gapPx;
+      const segH = count * unitPx;
+      const rectTop = cursorY - segH;
+
+      const rect = svgEl("rect", {
+        x: barX, y: rectTop, width: barWidth, height: Math.max(segH, 0.01),
+        rx: 1.5, ry: 1.5,
+        tabindex: "0", role: "img", "class": "chart-segment",
+        "aria-label": entry.label + " — " + seg.label + ": " + count + (count === 1 ? " item" : " items")
+      });
+      // Set via inline style (not the `fill` presentation attribute) so the
+      // CSS custom property reliably resolves — these are the exact same
+      // --status-good/--status-notchecked/--status-critical tokens used by
+      // the map markers, roof cards, and legend elsewhere in this app.
+      rect.style.fill = seg.colorVar;
+      const segTitle = svgEl("title");
+      segTitle.textContent = entry.label + " — " + seg.label + ": " + count;
+      rect.appendChild(segTitle);
+
+      rect.addEventListener("mouseenter", function () { showOverviewTooltip(rect, entry.label, seg.label, count); });
+      rect.addEventListener("mouseleave", hideOverviewTooltip);
+      rect.addEventListener("focus", function () { showOverviewTooltip(rect, entry.label, seg.label, count); });
+      rect.addEventListener("blur", hideOverviewTooltip);
+
+      barsG.appendChild(rect);
+      cursorY = rectTop;
+      drawnAny = true;
+    });
+
+    const dayLabel = svgEl("text", {
+      x: xCenter, y: plotBottom + 18, "text-anchor": "middle", "class": "chart-day-label"
+    });
+    dayLabel.textContent = entry.label;
+    barsG.appendChild(dayLabel);
+  });
+  svg.appendChild(barsG);
+}
+
 function renderOverviewView() {
-  const stackEl = document.getElementById("unit-histogram");
   const countsEl = document.getElementById("overview-counts");
   const legendEl = document.getElementById("overview-legend");
-  if (!stackEl || !countsEl || !legendEl) return;
+  if (!countsEl || !legendEl) return;
 
-  const counts = computeOverviewCounts();
+  const series = computeOverviewSeries();
+  renderOverviewChart(series);
 
-  stackEl.innerHTML = "";
-  stackEl.setAttribute("role", "img");
-  stackEl.setAttribute("aria-label",
-    counts.red + " items resulted in a finding, " + counts.grey + " not checked, " +
-    counts.green + " checked OK, out of " + counts.total + " total.");
-
-  function addBlocks(n, cssClass) {
-    for (let i = 0; i < n; i++) {
-      const b = document.createElement("div");
-      b.className = "unit-block " + cssClass;
-      stackEl.appendChild(b);
-    }
-  }
-  // Findings first so problems are never visually buried at the bottom of
-  // the stack, then not-checked, then OK.
-  addBlocks(counts.red, "unit-block-red");
-  addBlocks(counts.grey, "unit-block-grey");
-  addBlocks(counts.green, "unit-block-green");
-
-  countsEl.textContent = counts.green + " OK · " + counts.grey + " not checked · " +
-    counts.red + " finding" + (counts.red === 1 ? "" : "s") + " — " + counts.total + " total";
+  const today = series[series.length - 1].counts;
+  countsEl.textContent = "Today: " + today.green + " OK · " + today.grey + " not checked · " +
+    today.red + " finding" + (today.red === 1 ? "" : "s") + " — " + today.total + " total";
 
   legendEl.innerHTML = "";
   [

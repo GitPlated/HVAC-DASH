@@ -1050,32 +1050,95 @@ button.finding-indicator {
   flex-wrap: wrap;
 }
 
-.overview-stack-panel {
+.overview-chart-panel {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 12px;
-  max-height: 74vh;
-  overflow-y: auto;
-  flex: none;
+  padding: 16px 18px;
+  flex: 1 1 560px;
+  min-width: 320px;
+  max-width: 780px;
 }
 
-.unit-histogram {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 60px;
+.overview-chart-wrap {
+  position: relative;
+  overflow-x: auto;
 }
 
-.unit-block {
-  height: 12px;
-  border-radius: 2px;
-  flex: none;
+#overview-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 460px;
 }
 
-.unit-block-red { background: var(--status-critical); }
-.unit-block-grey { background: var(--status-notchecked); }
-.unit-block-green { background: var(--status-good); }
+.chart-gridline {
+  stroke: var(--grid-line);
+  stroke-width: 1;
+}
+
+.chart-axis-label {
+  font-size: 11px;
+  fill: var(--ink-muted);
+  font-family: var(--font-ui);
+}
+
+.chart-day-label {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--ink-secondary);
+  font-family: var(--font-ui);
+}
+
+.chart-segment {
+  cursor: default;
+}
+
+.chart-segment:focus {
+  outline: none;
+}
+
+.chart-segment:focus-visible {
+  stroke: var(--ink-primary);
+  stroke-width: 2px;
+}
+
+.overview-chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  margin-top: -8px;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  box-shadow: 0 6px 18px var(--shadow);
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.overview-chart-tooltip[hidden] {
+  display: none;
+}
+
+.overview-chart-tooltip .tooltip-value {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--ink-primary);
+  line-height: 1.2;
+}
+
+.overview-chart-tooltip .tooltip-cat {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+
+.overview-chart-tooltip .tooltip-day {
+  font-size: 0.7rem;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
 
 .overview-side {
   display: flex;

@@ -79,10 +79,13 @@
   </section>
 
   <section class="view-section" id="view-overview">
-    <p class="hint-text">Every checkable item across the whole facility, one block per item. Grouped so open findings are never buried at the bottom.</p>
+    <p class="hint-text">Every checkable item across the whole facility, snapshotted as of the end of each of the last 7 days. Findings anchor at the bottom of every bar so they're never buried.</p>
     <div class="overview-wrap">
-      <div class="overview-stack-panel">
-        <div class="unit-histogram" id="unit-histogram"></div>
+      <div class="overview-chart-panel">
+        <div class="overview-chart-wrap" id="overview-chart-wrap">
+          <svg id="overview-chart-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div class="overview-chart-tooltip" id="overview-chart-tooltip" hidden></div>
+        </div>
       </div>
       <div class="overview-side">
         <div class="overview-counts" id="overview-counts"></div>
