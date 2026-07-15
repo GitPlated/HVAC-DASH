@@ -87,16 +87,20 @@
    an obvious color cast even at modest alpha, so 0.10 is enough there;
    light mode needs to stay lower (0.06–0.07) since near-white bg-page +
    fully-saturated accent hues erode --ink-muted's margin faster per unit
-   of alpha (jacolby's dark indigo hurts contrast the most per-unit-alpha of
-   the three, hence the slightly lower value). */
+   of alpha than dark-mode's already-dark background does — hence the
+   slightly lower value across all three identities in light mode.
+   Jacolby (red) and John (green) were deliberately chosen a shade off the
+   app's existing --status-critical / --status-good tokens (see the
+   identity-theme-jacolby/john values below) so a quick glance at "who's
+   acting" is never confused with a critical-finding or OK status color. */
 .identity-theme-brett   { --identity-accent: #3987e5; --identity-wash: rgba(57, 135, 229, 0.10); }
-.identity-theme-jacolby { --identity-accent: #9085e9; --identity-wash: rgba(144, 133, 233, 0.10); }
-.identity-theme-john    { --identity-accent: #d95926; --identity-wash: rgba(217, 89, 38, 0.10); }
+.identity-theme-jacolby { --identity-accent: #e0485a; --identity-wash: rgba(224, 72, 90, 0.10); }
+.identity-theme-john    { --identity-accent: #35b573; --identity-wash: rgba(53, 181, 115, 0.10); }
 
 @media (prefers-color-scheme: light) {
   .identity-theme-brett   { --identity-accent: #2a78d6; --identity-wash: rgba(42, 120, 214, 0.07); }
-  .identity-theme-jacolby { --identity-accent: #4a3aa7; --identity-wash: rgba(74, 58, 167, 0.06); }
-  .identity-theme-john    { --identity-accent: #eb6834; --identity-wash: rgba(235, 104, 52, 0.07); }
+  .identity-theme-jacolby { --identity-accent: #c23b52; --identity-wash: rgba(194, 59, 82, 0.06); }
+  .identity-theme-john    { --identity-accent: #1f9d5c; --identity-wash: rgba(31, 157, 92, 0.07); }
 }
 
 * { box-sizing: border-box; }
@@ -1145,6 +1149,10 @@ button.finding-indicator {
   margin-bottom: 14px;
 }
 
+.btn-export-log {
+  margin-left: auto;
+}
+
 .log-date-label {
   font-size: 0.78rem;
   font-weight: 700;
@@ -1342,11 +1350,30 @@ button.finding-indicator {
   stroke-width: 2px;
 }
 
+/* Visible count painted directly on a segment (see renderOverviewChart in
+   js/app.js) — only added when the segment renders tall enough for a small
+   numeral to sit comfortably inside it; otherwise the count stays available
+   via the tooltip/title only. pointer-events:none so hovering the numeral
+   itself still resolves to (and triggers the tooltip on) the segment rect
+   underneath it rather than the text node. */
+.chart-segment-label {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-ui);
+  pointer-events: none;
+}
+
+/* Positioned via an exact top-left pixel computed in JS (showOverviewTooltip,
+   js/app.js) — top/left there already resolve the segment-edge anchor point,
+   the above/below flip, the OVERVIEW_TOOLTIP_GAP offset, AND clamping the
+   result to stay fully inside #overview-chart-wrap's own box, so no CSS
+   anchor transform/margin is layered on top of that (translate(-50%, 0) only
+   centers horizontally — the axis the tooltip is still literally centered
+   on the hovered segment for). */
 .overview-chart-tooltip {
   position: absolute;
   pointer-events: none;
-  transform: translate(-50%, -100%);
-  margin-top: -8px;
+  transform: translate(-50%, 0);
   background: var(--bg-panel-raised);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1355,6 +1382,12 @@ button.finding-indicator {
   white-space: nowrap;
   z-index: 5;
 }
+
+/* .overview-chart-tooltip-below is still toggled in JS (see
+   showOverviewTooltip) to mark which side the tooltip landed on, in case a
+   future visual hook (e.g. a directional caret) wants it — but it carries no
+   positioning of its own today, since JS computes the final top pixel for
+   both sides through the same clamp. */
 
 .overview-chart-tooltip[hidden] {
   display: none;

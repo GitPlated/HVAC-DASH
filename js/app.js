@@ -1443,6 +1443,88 @@ function wireDailyLogControls() {
   if (!input) return;
   input.value = localDateInputValue(new Date());
   input.addEventListener("change", renderDailyLogView);
+
+  const exportBtn = document.getElementById("btn-export-log");
+  if (exportBtn) exportBtn.addEventListener("click", exportDailyLogToExcel);
+}
+
+// -------------------------------------------------------------- excel export
+// One row per entry across the app's ENTIRE merged log history — every
+// checklist_log row and every finding_updates row currently loaded in
+// memory — reusing buildMergedDailyEntries() unfiltered (the exact same
+// merge already powering the Daily Log feed) rather than re-deriving the
+// merge logic here. Sorted chronologically (oldest first).
+function buildDailyLogExportRows() {
+  const entries = buildMergedDailyEntries();
+  entries.sort(function (a, b) { return a.ts - b.ts; });
+
+  return entries.map(function (entry) {
+    const cp = EQUIPMENT_BY_ID[entry.checkpointId];
+    const equipment = cp
+      ? (cp.equipment + (cp.designation ? " (" + cp.designation + ")" : ""))
+      : entry.checkpointId;
+    const location = cp ? cp.location : "";
+    const item = itemDisplayName(cp, entry.itemKey);
+
+    let type, value, notes;
+    if (entry.kind === "log") {
+      if (entry.itemKey && entry.itemKey.indexOf("sub:") === 0) {
+        type = "Oil reading";
+        value = "Oil level: " + (entry.oilLevel || "—");
+      } else {
+        type = "Status change";
+        const stateMeta = ITEM_STATE_META[entry.status || "not_checked"] || { label: entry.status };
+        value = stateMeta.label;
+      }
+      notes = entry.notes || "";
+    } else {
+      // finding_update: no separate freeform-notes field distinct from its
+      // message, so the status + message both live in Value (per spec) and
+      // Notes is left blank for these rows rather than duplicating it.
+      type = "Finding update";
+      const findingMeta = FINDING_STATE_META[entry.status] || { label: entry.status };
+      value = findingMeta.label + (entry.notes ? " — " + entry.notes : "");
+      notes = "";
+    }
+
+    return {
+      Date: localDateInputValue(entry.ts),
+      Time: entry.ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      Equipment: equipment,
+      Location: location,
+      Item: item,
+      Type: type,
+      Value: value,
+      Notes: notes,
+      // Consistent with every other actor display in this app (Daily Log
+      // rows, finding timeline entries): fall back to "Unknown" for null.
+      Actor: entry.actor || "Unknown"
+    };
+  });
+}
+
+const DAILY_LOG_EXPORT_COLUMNS = ["Date", "Time", "Equipment", "Location", "Item", "Type", "Value", "Notes", "Actor"];
+
+function exportDailyLogToExcel() {
+  if (typeof XLSX === "undefined") {
+    console.error("Export to Excel failed: the xlsx (SheetJS) library did not load.");
+    alert("Couldn't export — the Excel export library failed to load. Check your connection and try again.");
+    return;
+  }
+  try {
+    const rows = buildDailyLogExportRows();
+    const aoa = [DAILY_LOG_EXPORT_COLUMNS];
+    rows.forEach(function (r) {
+      aoa.push(DAILY_LOG_EXPORT_COLUMNS.map(function (col) { return r[col]; }));
+    });
+    const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Daily Log");
+    XLSX.writeFile(workbook, "hvac-daily-log-" + localDateInputValue(new Date()) + ".xlsx");
+  } catch (err) {
+    console.error("Failed to export daily log to Excel:", err);
+    alert("Couldn't export the log — see the browser console for details.");
+  }
 }
 
 // -------------------------------------------------------------- findings page
@@ -1659,13 +1741,34 @@ function niceAxisStep(total) {
   return 50;
 }
 
+// labelTextColor: computed (not assumed) per-segment WCAG contrast winner for
+// the small on-segment count label — white vs. each fill:
+//   red    (--status-critical  #d03b3b) vs #fff -> ~4.8:1
+//   grey   (--status-notchecked #6b6a66) vs #fff -> ~5.4:1 (vs. ~3.9:1 for dark ink)
+//   green  (--status-good      #0ca30c) vs #fff -> ~3.4:1 (matches the white-on-green
+//     text this app already commits to elsewhere, e.g. ITEM_STATE_META.ok/
+//     AGGREGATE_STATUS_META.ok's badge text)
+// White wins (or ties the app's existing convention) in all three cases.
 const OVERVIEW_SEGMENT_ORDER = [
-  { key: "red", label: "Resulted in a finding", colorVar: "var(--status-critical)", iconStatus: "active_issue" },
-  { key: "grey", label: "Not checked", colorVar: "var(--status-notchecked)", iconStatus: "not_checked" },
-  { key: "green", label: "Checked — OK", colorVar: "var(--status-good)", iconStatus: "ok" }
+  { key: "red", label: "Resulted in a finding", colorVar: "var(--status-critical)", iconStatus: "active_issue", labelTextColor: "#ffffff" },
+  { key: "grey", label: "Not checked", colorVar: "var(--status-notchecked)", iconStatus: "not_checked", labelTextColor: "#ffffff" },
+  { key: "green", label: "Checked — OK", colorVar: "var(--status-good)", iconStatus: "ok", labelTextColor: "#ffffff" }
 ];
 
+// Minimum rendered segment height (px) for the on-segment count label to have
+// comfortable padding above and below a ~11px numeral — below this, the label
+// is skipped entirely (never clipped/overflowing); the count stays reachable
+// via the segment's existing hover/focus tooltip and <title> either way.
+const OVERVIEW_SEGMENT_LABEL_MIN_HEIGHT = 18;
+
 let overviewTooltipHideTimer = null;
+
+// Gap (px) kept between the hovered segment's edge and the tooltip — used
+// both as the visual offset (added/subtracted when computing the tooltip's
+// exact top pixel in showOverviewTooltip) and as the margin required in the
+// "does this side actually fit" collision math, so the two can never drift
+// out of sync with each other.
+const OVERVIEW_TOOLTIP_GAP = 8;
 
 function showOverviewTooltip(targetEl, dayLabel, catLabel, count) {
   const wrap = document.getElementById("overview-chart-wrap");
@@ -1687,11 +1790,91 @@ function showOverviewTooltip(targetEl, dayLabel, catLabel, count) {
   tip.appendChild(catEl);
   tip.appendChild(dayEl);
 
+  // Must be visible BEFORE measuring, or its rendered size reads as 0
+  // (display:none).
+  tip.hidden = false;
+
   const wrapRect = wrap.getBoundingClientRect();
   const targetRect = targetEl.getBoundingClientRect();
-  tip.hidden = false;
-  tip.style.left = (targetRect.left - wrapRect.left + targetRect.width / 2 + wrap.scrollLeft) + "px";
-  tip.style.top = (targetRect.top - wrapRect.top + wrap.scrollTop) + "px";
+  const tipRect = tip.getBoundingClientRect();
+
+  // Positioned entirely in JS as one exact top-left pixel (no CSS anchor
+  // transform/margin trickery on the Y axis) so every case — comfortably
+  // above, flipped below, AND the neither-fits fallback — goes through the
+  // same single clamp, instead of separate code paths that could each
+  // independently drift out of sync with each other.
+  //
+  // Collision is measured against the WRAP's own box, NOT the viewport:
+  // #overview-chart-wrap sets overflow-x:auto so the chart can scroll
+  // horizontally on narrow screens, and per the CSS overflow spec that
+  // forces its overflow-y to compute as "auto" too (an axis can't stay
+  // "visible" once the other is scrollable) — so this element clips ANY
+  // child that renders outside its own box, including this absolutely-
+  // positioned tooltip, no matter how much room exists elsewhere on the
+  // page. Comparing against the viewport's top edge (as an earlier version
+  // of this function did) looked reasonable but was exactly backwards: the
+  // page header/legend/hint-text above the chart panel gives the viewport
+  // plenty of room, but none of that room is inside the wrap's own
+  // clipping box — so every bar's topmost "Checked — OK" segment (flush
+  // against the wrap's own top edge) rendered its tooltip fully invisible,
+  // clipped away above the wrap, even though "space above" looked huge
+  // from the viewport's point of view.
+  const tipH = tipRect.height;
+  const anchorTopLocal = targetRect.top - wrapRect.top + wrap.scrollTop;
+  const anchorBottomLocal = targetRect.bottom - wrapRect.top + wrap.scrollTop;
+  const spaceAbove = targetRect.top - wrapRect.top;
+  const spaceBelow = wrapRect.bottom - targetRect.bottom;
+  const neededV = tipH + OVERVIEW_TOOLTIP_GAP;
+
+  let topLocal, flipBelow;
+  if (spaceAbove >= neededV) {
+    flipBelow = false;
+    topLocal = anchorTopLocal - OVERVIEW_TOOLTIP_GAP - tipH;
+  } else if (spaceBelow >= neededV) {
+    flipBelow = true;
+    topLocal = anchorBottomLocal + OVERVIEW_TOOLTIP_GAP;
+  } else {
+    // Neither side has the full ~76px this needs — an extremely short
+    // chart, or (as happens for real, today) a short segment sandwiched
+    // between an even-shorter one above it and the wrap's own top edge.
+    // Use whichever side has more room, then clamp below so the tooltip
+    // stays fully inside the wrap's own box regardless — sitting flush
+    // against its edge, rather than floating the usual gap off the
+    // segment, beats being invisible.
+    flipBelow = spaceBelow > spaceAbove;
+    topLocal = flipBelow ? (anchorBottomLocal + OVERVIEW_TOOLTIP_GAP) : (anchorTopLocal - OVERVIEW_TOOLTIP_GAP - tipH);
+  }
+  // Clamp within the wrap's own box, intersected with the actual browser
+  // viewport — the wrap is the usual constraint (see above), but if the
+  // wrap itself is taller than the viewport (a very short window, or one
+  // scrolled so only part of the chart panel shows), no position inside the
+  // wrap alone can guarantee on-screen; intersecting with the viewport too
+  // means we only ever promise what's actually achievable, and still do the
+  // best possible job otherwise.
+  const minTopLocal = Math.max(wrap.scrollTop, wrap.scrollTop - wrapRect.top);
+  const maxTopLocal = Math.max(minTopLocal,
+    Math.min(wrap.scrollTop + wrap.clientHeight, wrap.scrollTop + (window.innerHeight - wrapRect.top)) - tipH);
+  topLocal = Math.min(Math.max(topLocal, minTopLocal), maxTopLocal);
+  tip.classList.toggle("overview-chart-tooltip-below", flipBelow);
+
+  // Horizontal placement is centered on the segment by default, but clamped
+  // so the tooltip's full (just-measured) width never renders outside the
+  // wrap's own box either — the same clipping container, just the other
+  // axis (this is what let the rightmost bar's widest tooltip — "Resulted
+  // in a finding", the longest category label — overflow past the wrap's
+  // right edge even on an ample desktop window) — intersected with the
+  // viewport for the same reason as the vertical clamp above. wrap.scrollLeft
+  // converts between the wrap's un-scrolled local coordinate space (which
+  // `left` is set in) and its currently visible scrolled-into-view window.
+  const halfW = tipRect.width / 2;
+  const idealCenterX = targetRect.left - wrapRect.left + targetRect.width / 2 + wrap.scrollLeft;
+  const minCenterX = Math.max(wrap.scrollLeft, wrap.scrollLeft - wrapRect.left) + halfW + OVERVIEW_TOOLTIP_GAP;
+  const maxCenterX = Math.max(minCenterX,
+    Math.min(wrap.scrollLeft + wrap.clientWidth, wrap.scrollLeft + (window.innerWidth - wrapRect.left)) - halfW - OVERVIEW_TOOLTIP_GAP);
+  const centerX = Math.min(Math.max(idealCenterX, minCenterX), maxCenterX);
+
+  tip.style.left = centerX + "px";
+  tip.style.top = topLocal + "px";
 }
 
 function hideOverviewTooltip() {
@@ -1789,6 +1972,23 @@ function renderOverviewChart(series) {
       rect.addEventListener("blur", hideOverviewTooltip);
 
       barsG.appendChild(rect);
+
+      // Visible on-segment count label — only when the segment is tall
+      // enough to hold it with comfortable padding on both sides; too-short
+      // segments skip the inline label entirely rather than clipping/
+      // overflowing (the count is still always reachable via the rect's own
+      // hover/focus tooltip + <title> above, unconditionally).
+      if (segH >= OVERVIEW_SEGMENT_LABEL_MIN_HEIGHT) {
+        const label = svgEl("text", {
+          x: xCenter, y: rectTop + segH / 2,
+          "text-anchor": "middle", "dominant-baseline": "central",
+          "class": "chart-segment-label", "aria-hidden": "true"
+        });
+        label.style.fill = seg.labelTextColor;
+        label.textContent = String(count);
+        barsG.appendChild(label);
+      }
+
       cursorY = rectTop;
       drawnAny = true;
     });
