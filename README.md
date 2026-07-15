@@ -42,10 +42,7 @@ There's no login: access control is enforced by Postgres Row Level Security
 policies, deliberately left open to match this tool's no-login internal use.
 If the dashboard can't reach the database on load, it shows an error banner
 and falls back to displaying everything as "Not checked" rather than
-crashing. A "Reset all entries" button in the header wipes every row in the
-shared tables (`checklist_log`, `findings`, `finding_updates`) after a
-confirmation prompt — this affects everyone using the dashboard, not just
-your browser.
+crashing.
 
 Every status change and reading is appended to an activity log rather than
 overwritten — browsable on the **Daily Log** tab, filterable by day.
@@ -60,9 +57,11 @@ update history.
 ## Who's on shift
 
 On every page load, a gate asks who's using the dashboard: **Brett Stone**,
-**Jacolby Moffett**, **John Danhoff** (each with their own accent color
-theme, applied to the header/tabs/buttons while they're active), or
-**Admin** (view-only — every edit control is hidden). This is attribution,
+**Jacolby Moffett**, **John Danhoff**, **Michael Petersen**, **David Haney**,
+**Ronald Vogel**, **Wilberth Carrizal**, **Tyler Christensen** (each with
+their own accent color theme, applied to the header/tabs/buttons while
+they're active), or **Admin** (view-only — every edit control is hidden).
+This is attribution,
 not authentication: there's no password, and nothing stops someone from
 picking a different name than their own. It resets every time the page
 loads — nobody inherits the last person's identity on a shared device.

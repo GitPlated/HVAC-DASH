@@ -88,19 +88,57 @@
    light mode needs to stay lower (0.06–0.07) since near-white bg-page +
    fully-saturated accent hues erode --ink-muted's margin faster per unit
    of alpha than dark-mode's already-dark background does — hence the
-   slightly lower value across all three identities in light mode.
+   slightly lower value across all identities in light mode.
    Jacolby (red) and John (green) were deliberately chosen a shade off the
    app's existing --status-critical / --status-good tokens (see the
    identity-theme-jacolby/john values below) so a quick glance at "who's
-   acting" is never confused with a critical-finding or OK status color. */
+   acting" is never confused with a critical-finding or OK status color.
+
+   The 5 identities below (michael/david/ronald/wilberth/tyler) were added
+   later and picked the same way, plus an explicit pairwise pass: computed
+   RGB Euclidean distance AND hue-angle separation between every one of the
+   (now 8) identity accents, AND against --status-good / --status-critical,
+   in both color schemes. Target was "clearly above" the distance/hue a
+   prior (rejected) violet measured against Brett's blue when a real user
+   complained it looked too similar (~84-87 RGB distance, ~34-36deg hue) —
+   that pair is the "too close" reference point, not a goal. Every pair
+   among the 8 identities clears both a ~84 RGB-distance and ~30deg hue-angle
+   bar EXCEPT two, both accepted as reasoned exceptions rather than defects:
+     - Ronald (burnt orange) vs Jacolby (red) and vs --status-critical: hue
+       angle alone is close (burnt orange unavoidably sits near the red
+       family on the wheel — a real "burnt orange" always does), but RGB
+       distance clears 76-98 in every scheme, which is still MORE distinct
+       than Jacolby-vs-status-critical's own already-shipped 27-37 —
+       i.e. more separated than a relationship this app already ships today.
+     - Michael (amber/gold) vs Ronald (burnt orange): both warm hues
+       sandwiched between red and yellow-green with limited wheel room; RGB
+       distance still clears 94-98, comfortably above the rejected pair's
+       84-87 lower bound, even though hue angle alone (~26-28deg) undershoots
+       the rough 30deg guideline slightly.
+   Every dark-mode accent was also checked for WCAG contrast as actual TEXT
+   (var(--identity-accent) is the color of .acting-as-name) against
+   --bg-panel-raised (#212120) and every light-mode accent against
+   --bg-page (#fcfcfb) in light mode — all 8 clear >=4:1 dark / >=3:1 light,
+   matching or beating the weakest ratio among the original 3 (Jacolby
+   dark 4.02:1, Michael/John light ~3.0-3.4:1). */
 .identity-theme-brett   { --identity-accent: #3987e5; --identity-wash: rgba(57, 135, 229, 0.10); }
 .identity-theme-jacolby { --identity-accent: #e0485a; --identity-wash: rgba(224, 72, 90, 0.10); }
 .identity-theme-john    { --identity-accent: #35b573; --identity-wash: rgba(53, 181, 115, 0.10); }
+.identity-theme-michael { --identity-accent: #d4b021; --identity-wash: rgba(212, 176, 33, 0.10); }
+.identity-theme-david   { --identity-accent: #a664d8; --identity-wash: rgba(166, 100, 216, 0.10); }
+.identity-theme-ronald  { --identity-accent: #f55a00; --identity-wash: rgba(245, 90, 0, 0.10); }
+.identity-theme-wilberth{ --identity-accent: #0ac2c2; --identity-wash: rgba(10, 194, 194, 0.10); }
+.identity-theme-tyler   { --identity-accent: #e619c3; --identity-wash: rgba(230, 25, 195, 0.10); }
 
 @media (prefers-color-scheme: light) {
   .identity-theme-brett   { --identity-accent: #2a78d6; --identity-wash: rgba(42, 120, 214, 0.07); }
   .identity-theme-jacolby { --identity-accent: #c23b52; --identity-wash: rgba(194, 59, 82, 0.06); }
   .identity-theme-john    { --identity-accent: #1f9d5c; --identity-wash: rgba(31, 157, 92, 0.07); }
+  .identity-theme-michael { --identity-accent: #af8f0d; --identity-wash: rgba(175, 143, 13, 0.07); }
+  .identity-theme-david   { --identity-accent: #4d206f; --identity-wash: rgba(77, 32, 111, 0.07); }
+  .identity-theme-ronald  { --identity-accent: #913608; --identity-wash: rgba(145, 54, 8, 0.07); }
+  .identity-theme-wilberth{ --identity-accent: #084949; --identity-wash: rgba(8, 73, 73, 0.07); }
+  .identity-theme-tyler   { --identity-accent: #c115a4; --identity-wash: rgba(193, 21, 164, 0.07); }
 }
 
 * { box-sizing: border-box; }
@@ -210,15 +248,6 @@ button, input, select {
   border-color: var(--identity-accent, var(--ink-muted));
 }
 
-.btn-danger {
-  border-color: rgba(208, 59, 59, 0.5);
-  color: var(--status-critical);
-}
-
-.btn-danger:hover {
-  background: rgba(208, 59, 59, 0.12);
-}
-
 .btn-icon {
   background: transparent;
   border: none;
@@ -285,7 +314,10 @@ select:disabled, input:disabled, textarea:disabled {
 }
 
 .identity-gate-inner {
-  max-width: 760px;
+  /* Widened from an earlier 760px so 8 named identities + Admin (9 cards
+     total) settle into a clean 3-column grid on desktop instead of an
+     uneven 4-then-1 wrap — see .identity-gate-grid below. */
+  max-width: 860px;
   width: 100%;
   text-align: center;
 }
@@ -304,8 +336,22 @@ select:disabled, input:disabled, textarea:disabled {
 
 .identity-gate-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  /* Mobile-first: wrap to as many 150px+ columns as fit (1 column on a
+     phone-width viewport, stacking all 9 cards vertically — scrollable,
+     never clipped or overlapping). */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 16px;
+}
+
+/* At 640px and up (a narrower, gate-specific breakpoint — NOT the same
+   768px breakpoint .slide-over uses above, that one's for the slide-over
+   panel going full-width on mobile), force an even 3x3 grid for the current
+   8-named + Admin count instead of letting auto-fit greedily pack a 4th
+   column and strand a lone full-width card on its own last row. */
+@media (min-width: 640px) {
+  .identity-gate-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
 .identity-card {

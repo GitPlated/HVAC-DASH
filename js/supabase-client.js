@@ -220,7 +220,7 @@
     return { finding: findingRows && findingRows[0], update: updateRows && updateRows[0] };
   }
 
-  // ---------------------------------------------------------- bulk load / reset
+  // ---------------------------------------------------------------- bulk load
 
   // One-shot load of everything the app needs on startup — three parallel
   // queries (not a per-item round trip). Callers derive "current" status
@@ -238,26 +238,6 @@
     return { log: log, findings: findings, findingUpdates: findingUpdates };
   }
 
-  async function resetAll() {
-    const failure = initFailure();
-    if (failure) return failure;
-
-    // PostgREST/supabase-js require some filter on delete. finding_updates
-    // and findings use a bigint identity id (always >= 1), so "not equal to
-    // -1" matches every row. checklist_log has no numeric id column exposed
-    // here, so "checkpoint_id not equal to empty string" matches every row
-    // (checkpoint_id is "not null" and every real id in js/data.js is
-    // non-empty). Delete children before parents even though finding_updates
-    // also cascades from findings, so a partial failure never leaves orphaned
-    // rows depending on cascade timing.
-    const { error: e1 } = await client.from(TABLE_FINDING_UPDATES).delete().neq("id", -1);
-    if (e1) throw e1;
-    const { error: e2 } = await client.from(TABLE_FINDINGS).delete().neq("id", -1);
-    if (e2) throw e2;
-    const { error: e3 } = await client.from(TABLE_LOG).delete().neq("checkpoint_id", "");
-    if (e3) throw e3;
-  }
-
   window.ChecklistStore = {
     loadAll: loadAll,
     loadLog: loadLog,
@@ -266,7 +246,6 @@
     loadFindings: loadFindings,
     loadFindingUpdates: loadFindingUpdates,
     createFinding: createFinding,
-    addFindingUpdate: addFindingUpdate,
-    resetAll: resetAll
+    addFindingUpdate: addFindingUpdate
   };
 })();

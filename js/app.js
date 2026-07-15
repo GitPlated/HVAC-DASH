@@ -99,16 +99,21 @@ const CATEGORY_COLORS = {
 //
 // Admin is view-only: every edit affordance (segmented Not-checked/OK/
 // Attention buttons, the oil-level <select>, every notes input + Save
-// button, the finding update form/"Add update", and "Reset all entries")
-// must be hidden or disabled and genuinely non-interactive under Admin —
-// canEdit() below is the single source of truth every one of those call
-// sites checks (both to disable at render time AND to early-return inside
-// the click/change handler itself, so nothing is reachable through devtools
-// DOM tampering either).
+// button, and the finding update form/"Add update") must be hidden or
+// disabled and genuinely non-interactive under Admin — canEdit() below is
+// the single source of truth every one of those call sites checks (both to
+// disable at render time AND to early-return inside the click/change
+// handler itself, so nothing is reachable through devtools DOM tampering
+// either).
 const IDENTITY_OPTIONS = [
   { id: "brett", name: "Brett Stone", themeClass: "identity-theme-brett" },
   { id: "jacolby", name: "Jacolby Moffett", themeClass: "identity-theme-jacolby" },
   { id: "john", name: "John Danhoff", themeClass: "identity-theme-john" },
+  { id: "michael", name: "Michael Petersen", themeClass: "identity-theme-michael" },
+  { id: "david", name: "David Haney", themeClass: "identity-theme-david" },
+  { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald" },
+  { id: "wilberth", name: "Wilberth Carrizal", themeClass: "identity-theme-wilberth" },
+  { id: "tyler", name: "Tyler Christensen", themeClass: "identity-theme-tyler" },
   { id: "admin", name: "Admin", themeClass: null, isAdmin: true }
 ];
 const IDENTITY_BY_ID = {};
@@ -145,13 +150,8 @@ function applyIdentityTheme(identity) {
 function updateActingAsUI() {
   const nameEl = document.getElementById("acting-as-name");
   const viewOnlyEl = document.getElementById("acting-as-viewonly");
-  const resetBtn = document.getElementById("btn-reset");
   if (nameEl) nameEl.textContent = CURRENT_IDENTITY ? CURRENT_IDENTITY.name : "—";
   if (viewOnlyEl) viewOnlyEl.hidden = !isAdminView();
-  // Admin can't see the "Reset all entries" button at all — not merely
-  // disabled — and it also stays hidden before anyone has picked an
-  // identity yet.
-  if (resetBtn) resetBtn.hidden = !canEdit();
 }
 
 function showIdentityGate() {
@@ -2053,29 +2053,6 @@ function wireHeaderControls() {
   TAB_IDS.forEach(function (id) {
     document.getElementById("tab-" + id).addEventListener("click", function () { switchTab(id); });
   });
-  document.getElementById("btn-reset").addEventListener("click", function () {
-    // Admin genuinely cannot trigger this through any code path — the button
-    // is hidden (not just disabled) for Admin (see updateActingAsUI), and
-    // this is the belt-and-suspenders check in case it's ever unhidden via
-    // devtools DOM tampering.
-    if (isAdminView()) return;
-    const ok = confirm("Reset ALL recorded checklist entries and findings for everyone using this dashboard? This cannot be undone.");
-    if (!ok) return;
-    ChecklistStore.resetAll()
-      .then(function () {
-        ingestLog([]);
-        ingestFindings([], []);
-        closePanel();
-        refreshStatusesUI();
-        renderDailyLogView();
-        renderFindingsView();
-        renderOverviewView();
-      })
-      .catch(function (err) {
-        console.error("ChecklistStore.resetAll failed:", err);
-        alert("Couldn't reset entries — the database delete failed. Check your connection and try again.");
-      });
-  });
 }
 
 function wirePanelControls() {
@@ -2116,8 +2093,8 @@ async function init() {
   wireIdentityGate();
   // Gate is visible by default in the HTML (no page-load flash of an
   // editable dashboard) — this just syncs the "Acting as" header UI (name
-  // placeholder, hidden Reset button/view-only badge) to the no-identity-
-  // selected-yet state.
+  // placeholder, hidden view-only badge) to the no-identity-selected-yet
+  // state.
   updateActingAsUI();
 
   // Render immediately against an empty cache (-> everything "not_checked")
