@@ -220,6 +220,77 @@
     return { finding: findingRows && findingRows[0], update: updateRows && updateRows[0] };
   }
 
+  // ------------------------------------------------------ password protection
+  // Thin wrappers over the 5 RPC functions defined in supabase/schema.sql
+  // (list_protected_user_names / verify_user_password / verify_master_password /
+  // set_user_password / remove_user_password) — an extra deterrent layer on
+  // top of the "attribution, not authentication" identity gate. Passwords are
+  // bcrypt-hashed server-side (see schema.sql) and never leave the database;
+  // these functions only ever return true/false or the set of protected
+  // names, never a hash.
+  //
+  // Same error contract as everything else in this file: every function
+  // below returns a Promise that REJECTS on any failure — including the RPC
+  // not existing yet because this migration hasn't landed on the live
+  // project. Callers in js/app.js treat a rejected listProtectedUserNames()
+  // as "nothing is protected yet" (empty set) rather than crashing, exactly
+  // like this app's existing load-error-banner pattern for a missing table.
+
+  async function listProtectedUserNames() {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("list_protected_user_names");
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function verifyUserPassword(userName, password) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("verify_user_password", { p_user_name: userName, p_password: password });
+    if (error) throw error;
+    return !!data;
+  }
+
+  async function verifyMasterPassword(password) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("verify_master_password", { p_password: password });
+    if (error) throw error;
+    return !!data;
+  }
+
+  // Returns false (no change made) if p_master_password doesn't match — never
+  // throws for a wrong master password, only for an actual connection/RPC
+  // failure.
+  async function setUserPassword(masterPassword, userName, newPassword) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("set_user_password", {
+      p_master_password: masterPassword,
+      p_user_name: userName,
+      p_new_password: newPassword
+    });
+    if (error) throw error;
+    return !!data;
+  }
+
+  async function removeUserPassword(masterPassword, userName) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("remove_user_password", {
+      p_master_password: masterPassword,
+      p_user_name: userName
+    });
+    if (error) throw error;
+    return !!data;
+  }
+
   // ---------------------------------------------------------------- bulk load
 
   // One-shot load of everything the app needs on startup — three parallel
@@ -246,6 +317,11 @@
     loadFindings: loadFindings,
     loadFindingUpdates: loadFindingUpdates,
     createFinding: createFinding,
-    addFindingUpdate: addFindingUpdate
+    addFindingUpdate: addFindingUpdate,
+    listProtectedUserNames: listProtectedUserNames,
+    verifyUserPassword: verifyUserPassword,
+    verifyMasterPassword: verifyMasterPassword,
+    setUserPassword: setUserPassword,
+    removeUserPassword: removeUserPassword
   };
 })();

@@ -61,14 +61,23 @@ On every page load, a gate asks who's using the dashboard: **Brett Stone**,
 **Ronald Vogel**, **Wilberth Carrizal**, **Tyler Christensen** (each with
 their own accent color theme, applied to the header/tabs/buttons while
 they're active), or **Admin** (view-only — every edit control is hidden).
-This is attribution,
-not authentication: there's no password, and nothing stops someone from
-picking a different name than their own. It resets every time the page
-loads — nobody inherits the last person's identity on a shared device.
+It resets every time the page loads — nobody inherits the last person's
+identity on a shared device.
 
 Every checklist change and finding update is signed with whoever was
 selected at the time, shown in the Daily Log and Findings tabs. Rows from
 before this feature existed show "Unknown."
+
+A named user can optionally be password-protected — a locked card prompts
+for that person's password before letting you select them. Passwords are
+managed from the "Manage passwords" link on the gate, itself gated behind
+a separate master password. Passwords are bcrypt-hashed and verified
+entirely inside Postgres functions (see `supabase/schema.sql`) — a hash
+never reaches the browser, only a true/false answer — so this is real
+protection against casual impersonation, not just a UI nicety. It's still
+not full authentication: there's no login-attempt throttling, so it won't
+stop someone determined to script repeated guesses against it. Reasonable
+for a small trusted team; know that limit going in.
 
 ## Running locally
 

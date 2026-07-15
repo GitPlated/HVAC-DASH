@@ -122,6 +122,71 @@ IDENTITY_OPTIONS.forEach(function (o) { IDENTITY_BY_ID[o.id] = o; });
 let CURRENT_IDENTITY = null; // null until a gate option is picked (or after Switch)
 let CURRENT_PANEL_CHECKPOINT = null; // checkpoint behind the open slide-over, if any — lets a mid-session Switch rebuild it in place
 
+// ---------------------------------------------------------- password gate
+// Extra deterrent layer on top of the identity gate above — still
+// "attribution, not authentication" per the README, just harder to spoof by
+// accident. Backed by 5 RPCs added to supabase/schema.sql (see
+// js/supabase-client.js): list_protected_user_names / verify_user_password /
+// verify_master_password / set_user_password / remove_user_password.
+//
+// PROTECTED_USER_NAMES is refreshed from the database on load (and again
+// after any successful set/remove in the management panel below) and held
+// only in memory — same "resets on reload" philosophy as CURRENT_IDENTITY
+// itself. A failed/missing-RPC load leaves this empty (nothing protected),
+// never crashes — see loadProtectedUserNames().
+let PROTECTED_USER_NAMES = new Set();
+
+function isNameProtected(name) {
+  return !!name && PROTECTED_USER_NAMES.has(name);
+}
+
+const LOCK_ICON_SVG = '<svg viewBox="0 0 20 20" width="12" height="12" aria-hidden="true">' +
+  '<path d="M6 9V6.6a4 4 0 0 1 8 0V9" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+  '<rect x="4.5" y="9" width="11" height="7.5" rx="1.4" fill="currentColor"/></svg>';
+
+// Adds/removes the small "Password required" badge on each named
+// .identity-card per PROTECTED_USER_NAMES — icon + visible text together
+// (never icon/color alone), matching this app's existing rule. Admin never
+// gets one (it can never have a password — see the management panel, which
+// excludes it entirely).
+function updateIdentityLockIndicators() {
+  document.querySelectorAll(".identity-card[data-identity]").forEach(function (card) {
+    const identity = IDENTITY_BY_ID[card.dataset.identity];
+    if (!identity || identity.isAdmin) return;
+    let lock = card.querySelector(".identity-card-lock");
+    if (isNameProtected(identity.name)) {
+      if (!lock) {
+        lock = document.createElement("span");
+        lock.className = "identity-card-lock";
+        lock.innerHTML = LOCK_ICON_SVG + "<span>Password required</span>";
+        card.appendChild(lock);
+      }
+    } else if (lock) {
+      lock.remove();
+    }
+  });
+}
+
+// Fetches the current protected-name set from the database. Never rejects —
+// any failure (RLS, network, or the RPC not existing yet because this
+// migration hasn't landed on the live project) is caught and treated as
+// "nothing is protected yet," exactly like this app's existing
+// load-error-banner pattern for a missing table, so a not-yet-migrated
+// project still loads and behaves exactly as it did before this feature.
+function loadProtectedUserNames() {
+  return ChecklistStore.listProtectedUserNames()
+    .then(function (names) {
+      PROTECTED_USER_NAMES = new Set(names || []);
+    })
+    .catch(function (err) {
+      console.error("Couldn't load protected user names — treating every identity as unprotected:", err);
+      PROTECTED_USER_NAMES = new Set();
+    })
+    .then(function () {
+      updateIdentityLockIndicators();
+    });
+}
+
 // True only for a real named user — false for Admin AND for the
 // no-identity-picked-yet state (the gate should be covering the screen in
 // that case, but every write/edit path checks this too, belt-and-suspenders).
@@ -158,6 +223,8 @@ function showIdentityGate() {
   CURRENT_IDENTITY = null;
   applyIdentityTheme(null);
   updateActingAsUI();
+  closeIdentityPasswordPrompt();
+  closeManagePanel();
   const gate = document.getElementById("identity-gate");
   if (gate) gate.hidden = false;
 }
@@ -173,6 +240,8 @@ function selectIdentity(identityId) {
   CURRENT_IDENTITY = identity;
   applyIdentityTheme(identity);
   updateActingAsUI();
+  closeIdentityPasswordPrompt();
+  closeManagePanel();
   hideIdentityGate();
   // Re-render anything whose edit-affordance/attribution state depends on
   // the actor so a mid-session Switch takes effect immediately, with no page
@@ -182,12 +251,318 @@ function selectIdentity(identityId) {
   renderFindingsView();
 }
 
+// -------------------------------------------------------- identity password prompt
+// Shared password-entry form used by any PROTECTED named card (see
+// updateIdentityLockIndicators above) — lives outside the .identity-card
+// buttons themselves (an <input>/<button> can't validly nest inside another
+// <button>). Only one identity's prompt is ever open at a time;
+// gatePendingIdentityId tracks which.
+let gatePendingIdentityId = null;
+
+function openIdentityPasswordPrompt(identity) {
+  closeManagePanel();
+  gatePendingIdentityId = identity.id;
+  const prompt = document.getElementById("identity-password-prompt");
+  const title = document.getElementById("identity-password-prompt-title");
+  const input = document.getElementById("identity-password-input");
+  const err = document.getElementById("identity-password-error");
+  const submitBtn = document.getElementById("identity-password-submit");
+  if (!prompt || !title || !input || !err) return;
+  title.textContent = "Enter password for " + identity.name;
+  input.value = "";
+  err.hidden = true;
+  if (submitBtn) submitBtn.disabled = false;
+  prompt.hidden = false;
+  input.focus();
+}
+
+// Cancel (or picking a different card, or Switch, or a successful submit)
+// always returns to a clean slate — never leaves a stale typed password
+// sitting in the DOM.
+function closeIdentityPasswordPrompt() {
+  gatePendingIdentityId = null;
+  const prompt = document.getElementById("identity-password-prompt");
+  const input = document.getElementById("identity-password-input");
+  const err = document.getElementById("identity-password-error");
+  if (prompt) prompt.hidden = true;
+  if (input) input.value = "";
+  if (err) err.hidden = true;
+}
+
+function submitIdentityPassword() {
+  if (!gatePendingIdentityId) return;
+  const identity = IDENTITY_BY_ID[gatePendingIdentityId];
+  const input = document.getElementById("identity-password-input");
+  const err = document.getElementById("identity-password-error");
+  const submitBtn = document.getElementById("identity-password-submit");
+  if (!identity || !input) return;
+  const typed = input.value;
+  err.hidden = true;
+  if (submitBtn) submitBtn.disabled = true;
+  ChecklistStore.verifyUserPassword(identity.name, typed)
+    .then(function (ok) {
+      if (submitBtn) submitBtn.disabled = false;
+      if (ok) {
+        closeIdentityPasswordPrompt();
+        selectIdentity(identity.id);
+      } else {
+        err.textContent = "Incorrect password. Try again.";
+        err.hidden = false;
+        input.value = "";
+        input.focus();
+      }
+    })
+    .catch(function (e) {
+      console.error("verify_user_password failed:", identity.name, e);
+      if (submitBtn) submitBtn.disabled = false;
+      err.textContent = "Couldn't verify — check your connection and try again.";
+      err.hidden = false;
+    });
+}
+
+// -------------------------------------------------------- password management module
+// Reveals a master-password prompt, then (on success) a panel listing all 8
+// named users with Set/Update + Remove controls. Admin is never listed here
+// — it never has a password (view-only, no write path to protect).
+// MASTER_PASSWORD_CACHE holds the master password ONLY for the lifetime this
+// panel is open (in memory, never localStorage/sessionStorage) so the admin
+// doesn't have to retype it for every single change — cleared the instant
+// the panel closes.
+let MASTER_PASSWORD_CACHE = null;
+
+function openManagePanel() {
+  closeIdentityPasswordPrompt();
+  const panel = document.getElementById("identity-manage-panel");
+  const masterPrompt = document.getElementById("manage-master-prompt");
+  const usersPanel = document.getElementById("manage-users-panel");
+  const masterInput = document.getElementById("manage-master-input");
+  const masterErr = document.getElementById("manage-master-error");
+  if (!panel) return;
+  MASTER_PASSWORD_CACHE = null;
+  panel.hidden = false;
+  if (masterPrompt) masterPrompt.hidden = false;
+  if (usersPanel) usersPanel.hidden = true;
+  if (masterErr) masterErr.hidden = true;
+  if (masterInput) {
+    masterInput.value = "";
+    masterInput.focus();
+  }
+}
+
+function closeManagePanel() {
+  const panel = document.getElementById("identity-manage-panel");
+  const masterInput = document.getElementById("manage-master-input");
+  if (panel) panel.hidden = true;
+  if (masterInput) masterInput.value = "";
+  MASTER_PASSWORD_CACHE = null;
+}
+
+function submitManageMasterPassword() {
+  const input = document.getElementById("manage-master-input");
+  const err = document.getElementById("manage-master-error");
+  const submitBtn = document.getElementById("manage-master-submit");
+  if (!input) return;
+  const typed = input.value;
+  err.hidden = true;
+  if (submitBtn) submitBtn.disabled = true;
+  ChecklistStore.verifyMasterPassword(typed)
+    .then(function (ok) {
+      if (submitBtn) submitBtn.disabled = false;
+      if (ok) {
+        MASTER_PASSWORD_CACHE = typed;
+        document.getElementById("manage-master-prompt").hidden = true;
+        document.getElementById("manage-users-panel").hidden = false;
+        renderManageUsersList();
+      } else {
+        err.textContent = "Incorrect master password.";
+        err.hidden = false;
+        input.value = "";
+        input.focus();
+      }
+    })
+    .catch(function (e) {
+      console.error("verify_master_password failed:", e);
+      if (submitBtn) submitBtn.disabled = false;
+      err.textContent = "Couldn't verify — check your connection and try again.";
+      err.hidden = false;
+    });
+}
+
+function renderManageUsersList() {
+  const list = document.getElementById("manage-users-list");
+  if (!list) return;
+  list.innerHTML = "";
+  IDENTITY_OPTIONS.filter(function (o) { return !o.isAdmin; }).forEach(function (identity) {
+    list.appendChild(buildManageUserRow(identity));
+  });
+}
+
+function buildManageUserRow(identity) {
+  const row = document.createElement("div");
+  row.className = "manage-user-row";
+
+  const head = document.createElement("div");
+  head.className = "manage-user-row-head";
+  const nameEl = document.createElement("span");
+  nameEl.className = "manage-user-row-name";
+  nameEl.textContent = identity.name;
+  head.appendChild(nameEl);
+
+  const statusEl = document.createElement("span");
+  head.appendChild(statusEl);
+  row.appendChild(head);
+
+  const controls = document.createElement("div");
+  controls.className = "manage-user-row-controls";
+
+  const pwInput = document.createElement("input");
+  pwInput.type = "password";
+  pwInput.className = "notes-input";
+  pwInput.placeholder = "New password";
+  pwInput.autocomplete = "off";
+  controls.appendChild(pwInput);
+
+  const setBtn = document.createElement("button");
+  setBtn.type = "button";
+  setBtn.className = "btn";
+  setBtn.textContent = "Set/Update password";
+  controls.appendChild(setBtn);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "btn";
+  removeBtn.textContent = "Remove password";
+  controls.appendChild(removeBtn);
+
+  row.appendChild(controls);
+
+  const err = document.createElement("div");
+  err.className = "save-error-note";
+  err.hidden = true;
+  row.appendChild(err);
+
+  function refreshRowStatus() {
+    const isProtected = isNameProtected(identity.name);
+    statusEl.className = "manage-user-row-status" + (isProtected ? " is-protected" : "");
+    statusEl.innerHTML = (isProtected ? LOCK_ICON_SVG : "") +
+      "<span>" + (isProtected ? "Password set" : "No password set") + "</span>";
+    // Remove is only meaningful for a user that currently has a password.
+    removeBtn.disabled = !isProtected;
+  }
+  refreshRowStatus();
+
+  setBtn.addEventListener("click", function () {
+    if (!MASTER_PASSWORD_CACHE) {
+      err.textContent = "Session expired — close and reopen Manage passwords.";
+      err.hidden = false;
+      return;
+    }
+    const newPw = pwInput.value;
+    if (!newPw) {
+      err.textContent = "Enter a password first.";
+      err.hidden = false;
+      return;
+    }
+    err.hidden = true;
+    setBtn.disabled = true;
+    ChecklistStore.setUserPassword(MASTER_PASSWORD_CACHE, identity.name, newPw)
+      .then(function (ok) {
+        setBtn.disabled = false;
+        if (!ok) {
+          err.textContent = "Couldn't set password — the cached master password may be stale. Close and reopen Manage passwords.";
+          err.hidden = false;
+          return;
+        }
+        pwInput.value = "";
+        return loadProtectedUserNames().then(refreshRowStatus);
+      })
+      .catch(function (e) {
+        console.error("set_user_password failed:", identity.name, e);
+        setBtn.disabled = false;
+        err.textContent = "Couldn't save — check your connection and try again.";
+        err.hidden = false;
+      });
+  });
+
+  removeBtn.addEventListener("click", function () {
+    if (!MASTER_PASSWORD_CACHE) {
+      err.textContent = "Session expired — close and reopen Manage passwords.";
+      err.hidden = false;
+      return;
+    }
+    err.hidden = true;
+    removeBtn.disabled = true;
+    ChecklistStore.removeUserPassword(MASTER_PASSWORD_CACHE, identity.name)
+      .then(function (ok) {
+        if (!ok) {
+          removeBtn.disabled = false;
+          err.textContent = "Couldn't remove password — the cached master password may be stale. Close and reopen Manage passwords.";
+          err.hidden = false;
+          return;
+        }
+        pwInput.value = "";
+        return loadProtectedUserNames().then(refreshRowStatus);
+      })
+      .catch(function (e) {
+        console.error("remove_user_password failed:", identity.name, e);
+        removeBtn.disabled = false;
+        err.textContent = "Couldn't remove — check your connection and try again.";
+        err.hidden = false;
+      });
+  });
+
+  return row;
+}
+
+function wireManagePasswordsModule() {
+  const manageBtn = document.getElementById("btn-manage-passwords");
+  if (manageBtn) manageBtn.addEventListener("click", openManagePanel);
+
+  const masterSubmit = document.getElementById("manage-master-submit");
+  if (masterSubmit) masterSubmit.addEventListener("click", submitManageMasterPassword);
+  const masterCancel = document.getElementById("manage-master-cancel");
+  if (masterCancel) masterCancel.addEventListener("click", closeManagePanel);
+  const masterInput = document.getElementById("manage-master-input");
+  if (masterInput) {
+    masterInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") submitManageMasterPassword();
+    });
+  }
+
+  const closeBtn = document.getElementById("manage-panel-close");
+  if (closeBtn) closeBtn.addEventListener("click", closeManagePanel);
+}
+
 function wireIdentityGate() {
   document.querySelectorAll(".identity-card").forEach(function (card) {
-    card.addEventListener("click", function () { selectIdentity(card.dataset.identity); });
+    card.addEventListener("click", function () {
+      const identity = IDENTITY_BY_ID[card.dataset.identity];
+      if (!identity) return;
+      // Only named, currently-protected users get the password detour —
+      // Admin and every unprotected named user still select instantly, zero
+      // friction, exactly as before this feature.
+      if (!identity.isAdmin && isNameProtected(identity.name)) {
+        openIdentityPasswordPrompt(identity);
+        return;
+      }
+      selectIdentity(card.dataset.identity);
+    });
   });
   const switchBtn = document.getElementById("btn-switch-identity");
   if (switchBtn) switchBtn.addEventListener("click", showIdentityGate);
+
+  const idSubmit = document.getElementById("identity-password-submit");
+  if (idSubmit) idSubmit.addEventListener("click", submitIdentityPassword);
+  const idCancel = document.getElementById("identity-password-cancel");
+  if (idCancel) idCancel.addEventListener("click", closeIdentityPasswordPrompt);
+  const idInput = document.getElementById("identity-password-input");
+  if (idInput) {
+    idInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") submitIdentityPassword();
+    });
+  }
+
+  wireManagePasswordsModule();
 }
 
 // ---------------------------------------------------------------- storage
@@ -2191,6 +2566,13 @@ async function init() {
   // flight — this doubles as the "loading" state for the map/roof grid.
   renderFloorSVG();
   renderRoofGrid();
+
+  // Fire-and-forget: fetches which named users currently have a password set
+  // and paints the lock badges once it resolves. Independent of the main
+  // checklist/findings load below and never blocks the gate — a failed or
+  // not-yet-migrated call just leaves every card unprotected (see
+  // loadProtectedUserNames), it never throws.
+  loadProtectedUserNames();
 
   // Kicked off in parallel with the identity gate being shown (rather than
   // waiting for a name to be picked first) so data is already loaded by the

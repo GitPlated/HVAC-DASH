@@ -403,6 +403,153 @@ select:disabled, input:disabled, textarea:disabled {
   border-radius: 999px;
 }
 
+/* ------------------------------------------------------------ identity gate: password protection
+   Lock badge injected by updateIdentityLockIndicators() (js/app.js) onto any
+   .identity-card whose display name is in the protected set. Icon + visible
+   text label together (never color/icon alone), matching this app's existing
+   rule (see e.g. .finding-indicator, .assumed-note). */
+.identity-card-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+}
+
+/* Shared password-entry form (any protected card) and the master-password /
+   management module below both reuse .update-form's existing "Log an
+   update" look (see the panel-content section further down) via
+   .gate-inline-form, just centered and width-capped for the gate's
+   centered-column layout. */
+.identity-password-prompt,
+.identity-manage-panel {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.identity-password-prompt[hidden],
+.identity-manage-panel[hidden] {
+  display: none;
+}
+
+/* #manage-master-prompt reuses .update-form's `display: flex` (an author
+   rule), which otherwise beats the UA default `[hidden] { display: none }`
+   the moment the master password is accepted and this element's hidden
+   property flips to true — leaving the master-password form visibly
+   stacked on top of the now-revealed user list. Same fix as
+   .manage-users-panel[hidden] below, just for this sibling. */
+#manage-master-prompt[hidden] {
+  display: none;
+}
+
+.gate-inline-form {
+  max-width: 360px;
+  width: 100%;
+  text-align: left;
+}
+
+.gate-manage-wrap {
+  margin-top: 28px;
+  text-align: center;
+}
+
+/* Deliberately subordinate to the 9 identity cards above — a plain
+   underlined text link, not a bordered .btn — this is an admin utility, not
+   a primary gate action. */
+.gate-manage-link {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.gate-manage-link:hover {
+  color: var(--ink-secondary);
+}
+
+.manage-users-panel {
+  max-width: 560px;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.manage-users-panel[hidden] {
+  display: none;
+}
+
+.manage-users-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.manage-user-row {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-panel);
+}
+
+.manage-user-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.manage-user-row-name {
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.manage-user-row-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+}
+
+.manage-user-row-status.is-protected {
+  color: var(--status-warning);
+}
+
+.manage-user-row-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.manage-user-row-controls .notes-input {
+  flex: 1 1 140px;
+  min-width: 140px;
+}
+
 /* ------------------------------------------------------------ acting-as indicator */
 .acting-as {
   display: inline-flex;

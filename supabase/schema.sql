@@ -85,6 +85,118 @@ create policy "Allow anon insert" on public.finding_updates for insert to anon w
 drop policy if exists "Allow anon delete" on public.finding_updates;
 create policy "Allow anon delete" on public.finding_updates for delete to anon using (true); -- Reset all entries only
 
+-- v4: password-gated identities. Per-user passwords and the management
+-- module's master password are bcrypt-hashed (pgcrypto) and checked entirely
+-- inside SECURITY DEFINER functions — the anon role has NO select/insert/
+-- update policy on either table below, so a password hash can never be
+-- fetched directly by the client, only asked "does this password match?"
+-- and told true/false. This is real protection given a static frontend
+-- with no backend server of its own: hashes never leave the database.
+--
+-- The master password itself is NOT set here on purpose, so its plaintext
+-- never enters git history — see the separate one-off seeding snippet,
+-- meant to be run directly in the Supabase SQL Editor and never committed.
+
+create extension if not exists pgcrypto with schema extensions;
+
+create table if not exists public.user_passwords (
+  user_name text primary key,
+  password_hash text not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.app_secrets (
+  key text primary key,
+  value_hash text not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.user_passwords enable row level security;
+alter table public.app_secrets enable row level security;
+-- Deliberately no policies for anon on either table — every access path
+-- goes through the functions below.
+
+create or replace function public.list_protected_user_names()
+returns setof text
+language sql
+security definer
+set search_path = public, extensions
+as $$
+  select user_name from public.user_passwords;
+$$;
+grant execute on function public.list_protected_user_names() to anon;
+
+create or replace function public.verify_master_password(p_password text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  stored text;
+begin
+  select value_hash into stored from public.app_secrets where key = 'master_password';
+  if stored is null then
+    return false;
+  end if;
+  return crypt(p_password, stored) = stored;
+end;
+$$;
+grant execute on function public.verify_master_password(text) to anon;
+
+create or replace function public.verify_user_password(p_user_name text, p_password text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  stored text;
+begin
+  select password_hash into stored from public.user_passwords where user_name = p_user_name;
+  if stored is null then
+    return true; -- no password configured for this user yet: open access
+  end if;
+  return crypt(p_password, stored) = stored;
+end;
+$$;
+grant execute on function public.verify_user_password(text, text) to anon;
+
+create or replace function public.set_user_password(p_master_password text, p_user_name text, p_new_password text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.verify_master_password(p_master_password) then
+    return false;
+  end if;
+  insert into public.user_passwords (user_name, password_hash, updated_at)
+  values (p_user_name, crypt(p_new_password, gen_salt('bf')), now())
+  on conflict (user_name) do update
+    set password_hash = excluded.password_hash, updated_at = now();
+  return true;
+end;
+$$;
+grant execute on function public.set_user_password(text, text, text) to anon;
+
+create or replace function public.remove_user_password(p_master_password text, p_user_name text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.verify_master_password(p_master_password) then
+    return false;
+  end if;
+  delete from public.user_passwords where user_name = p_user_name;
+  return true;
+end;
+$$;
+grant execute on function public.remove_user_password(text, text) to anon;
+
 -- v3: change attribution — the three named users (Brett Stone, Jacolby
 -- Moffett, John Danhoff) each sign their writes with their display name;
 -- "Admin" is view-only and never appears as an actor. These ALTER statements

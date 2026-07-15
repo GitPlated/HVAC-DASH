@@ -51,6 +51,49 @@
         <span class="identity-card-badge">View only</span>
       </button>
     </div>
+
+    <!-- Shared password-entry form for any PROTECTED named card (see
+         wireIdentityGate/openIdentityPasswordPrompt in js/app.js). Lives
+         outside the .identity-card buttons themselves — an <input>/<button>
+         can't validly nest inside another <button>, and clicking them would
+         also re-trigger the card's own click handler. -->
+    <div class="identity-password-prompt" id="identity-password-prompt" hidden>
+      <div class="update-form gate-inline-form">
+        <div class="update-form-title" id="identity-password-prompt-title">Enter password</div>
+        <input type="password" class="notes-input" id="identity-password-input" placeholder="Password" autocomplete="off">
+        <div class="save-error-note" id="identity-password-error" hidden>Incorrect password. Try again.</div>
+        <div class="update-form-actions">
+          <button type="button" class="btn" id="identity-password-submit">Submit</button>
+          <button type="button" class="btn" id="identity-password-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Password management module — deliberately small/secondary (admin
+         utility, not a primary gate action). -->
+    <div class="gate-manage-wrap">
+      <button type="button" class="gate-manage-link" id="btn-manage-passwords">Manage passwords</button>
+    </div>
+
+    <div class="identity-manage-panel" id="identity-manage-panel" hidden>
+      <div class="update-form gate-inline-form" id="manage-master-prompt">
+        <div class="update-form-title">Enter master password</div>
+        <input type="password" class="notes-input" id="manage-master-input" placeholder="Master password" autocomplete="off">
+        <div class="save-error-note" id="manage-master-error" hidden>Incorrect master password.</div>
+        <div class="update-form-actions">
+          <button type="button" class="btn" id="manage-master-submit">Submit</button>
+          <button type="button" class="btn" id="manage-master-cancel">Cancel</button>
+        </div>
+      </div>
+
+      <div class="manage-users-panel" id="manage-users-panel" hidden>
+        <div class="update-form-title">Manage user passwords</div>
+        <div class="manage-users-list" id="manage-users-list"></div>
+        <div class="update-form-actions">
+          <button type="button" class="btn" id="manage-panel-close">Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
