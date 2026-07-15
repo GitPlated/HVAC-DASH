@@ -1192,11 +1192,8 @@ button.finding-indicator {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 14px;
-}
-
-.btn-export-log {
-  margin-left: auto;
 }
 
 .log-date-label {
@@ -1212,6 +1209,33 @@ button.finding-indicator {
   border-radius: 6px;
   padding: 6px 10px;
   font-size: 0.82rem;
+}
+
+/* Scopes the Export-to-Excel button specifically — deliberately grouped in
+   its own bordered box with a small caps label so it reads as distinct from
+   the single-day .log-date-input picker above (which only ever drives the
+   on-screen feed and is completely unaffected by this range). margin-left:
+   auto pulls this group — and the Export button that immediately follows it
+   in markup, via the shared .log-controls gap — to the right side of the
+   controls row, away from the on-screen Date picker on the left. */
+.export-range-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel-raised);
+}
+
+.export-range-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
 }
 
 .daily-log-feed {

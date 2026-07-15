@@ -113,6 +113,15 @@
     <div class="log-controls">
       <label class="log-date-label" for="log-date-input">Date</label>
       <input type="date" id="log-date-input" class="log-date-input">
+
+      <div class="export-range-group" id="export-range-group">
+        <span class="export-range-label">Export range</span>
+        <label class="log-date-label" for="log-export-from">From</label>
+        <input type="date" id="log-export-from" class="log-date-input">
+        <label class="log-date-label" for="log-export-to">To</label>
+        <input type="date" id="log-export-to" class="log-date-input">
+      </div>
+
       <button type="button" class="btn btn-export-log" id="btn-export-log">Export to Excel</button>
     </div>
     <div class="daily-log-feed" id="daily-log-feed"></div>

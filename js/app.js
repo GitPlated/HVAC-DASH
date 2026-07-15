@@ -1438,24 +1438,86 @@ function renderDailyLogView() {
   entries.forEach(function (e) { feed.appendChild(buildDailyLogRow(e)); });
 }
 
+// Earliest/latest local-calendar-day date strings (same "YYYY-MM-DD" shape
+// as localDateInputValue) across every currently-loaded checklist_log +
+// finding_updates entry — computed live from buildMergedDailyEntries() every
+// time, never hardcoded. Plain string min/max works because
+// localDateInputValue's zero-padded "YYYY-MM-DD" shape sorts identically to
+// chronological order. Returns null when there's no data loaded yet (e.g.
+// the initial Supabase load failed) so the caller can fall back sensibly.
+function computeMergedEntriesDateRange() {
+  const entries = buildMergedDailyEntries();
+  if (!entries.length) return null;
+  let min = null, max = null;
+  entries.forEach(function (e) {
+    const dv = localDateInputValue(e.ts);
+    if (min === null || dv < min) min = dv;
+    if (max === null || dv > max) max = dv;
+  });
+  return { from: min, to: max };
+}
+
+function getExportRangeInputs() {
+  return {
+    fromEl: document.getElementById("log-export-from"),
+    toEl: document.getElementById("log-export-to")
+  };
+}
+
+// True once the user has touched either range input by hand — after that,
+// a later data (re)load must never clobber their explicit choice.
+let exportRangeUserEdited = false;
+
+// Defaults both range inputs to the true earliest/latest dates currently in
+// the loaded data, so leaving them untouched and clicking Export still
+// exports the entire history exactly as before. Falls back to today's date
+// for both ends when no data is loaded yet, rather than leaving the inputs
+// blank or disabling the Export button.
+function setExportRangeDefaults() {
+  const { fromEl, toEl } = getExportRangeInputs();
+  if (!fromEl || !toEl) return;
+  const range = computeMergedEntriesDateRange();
+  const today = localDateInputValue(new Date());
+  fromEl.value = range ? range.from : today;
+  toEl.value = range ? range.to : today;
+}
+
 function wireDailyLogControls() {
   const input = document.getElementById("log-date-input");
-  if (!input) return;
-  input.value = localDateInputValue(new Date());
-  input.addEventListener("change", renderDailyLogView);
+  if (input) {
+    input.value = localDateInputValue(new Date());
+    input.addEventListener("change", renderDailyLogView);
+  }
+
+  setExportRangeDefaults();
+  const { fromEl, toEl } = getExportRangeInputs();
+  [fromEl, toEl].forEach(function (el) {
+    if (el) el.addEventListener("change", function () { exportRangeUserEdited = true; });
+  });
 
   const exportBtn = document.getElementById("btn-export-log");
   if (exportBtn) exportBtn.addEventListener("click", exportDailyLogToExcel);
 }
 
 // -------------------------------------------------------------- excel export
-// One row per entry across the app's ENTIRE merged log history — every
+// One row per entry across the app's merged log history — every
 // checklist_log row and every finding_updates row currently loaded in
-// memory — reusing buildMergedDailyEntries() unfiltered (the exact same
-// merge already powering the Daily Log feed) rather than re-deriving the
-// merge logic here. Sorted chronologically (oldest first).
-function buildDailyLogExportRows() {
-  const entries = buildMergedDailyEntries();
+// memory — reusing buildMergedDailyEntries() (the exact same merge already
+// powering the Daily Log feed) rather than re-deriving the merge logic here.
+// fromDate/toDate are optional "YYYY-MM-DD" strings (the same shape
+// localDateInputValue produces); when both are omitted every entry is
+// included, preserving the export's original "everything" default. Filtering
+// compares each entry's OWN local calendar day (via localDateInputValue) —
+// the same local-day convention used throughout this app — against the
+// range, inclusive on both ends. Sorted chronologically (oldest first).
+function buildDailyLogExportRows(fromDate, toDate) {
+  const entries = buildMergedDailyEntries().filter(function (entry) {
+    if (!fromDate && !toDate) return true;
+    const d = localDateInputValue(entry.ts);
+    if (fromDate && d < fromDate) return false;
+    if (toDate && d > toDate) return false;
+    return true;
+  });
   entries.sort(function (a, b) { return a.ts - b.ts; });
 
   return entries.map(function (entry) {
@@ -1511,8 +1573,24 @@ function exportDailyLogToExcel() {
     alert("Couldn't export — the Excel export library failed to load. Check your connection and try again.");
     return;
   }
+
+  const { fromEl, toEl } = getExportRangeInputs();
+  let fromVal = fromEl ? fromEl.value : "";
+  let toVal = toEl ? toEl.value : "";
+
+  // From-after-To is handled by swapping rather than blocking export or
+  // silently exporting the wrong slice — and the swap is reflected back into
+  // the visible inputs so what's on screen always matches what got exported.
+  if (fromVal && toVal && fromVal > toVal) {
+    const tmp = fromVal;
+    fromVal = toVal;
+    toVal = tmp;
+    if (fromEl) fromEl.value = fromVal;
+    if (toEl) toEl.value = toVal;
+  }
+
   try {
-    const rows = buildDailyLogExportRows();
+    const rows = buildDailyLogExportRows(fromVal || null, toVal || null);
     const aoa = [DAILY_LOG_EXPORT_COLUMNS];
     rows.forEach(function (r) {
       aoa.push(DAILY_LOG_EXPORT_COLUMNS.map(function (col) { return r[col]; }));
@@ -1520,7 +1598,18 @@ function exportDailyLogToExcel() {
     const worksheet = XLSX.utils.aoa_to_sheet(aoa);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Daily Log");
-    XLSX.writeFile(workbook, "hvac-daily-log-" + localDateInputValue(new Date()) + ".xlsx");
+
+    // Filename reflects the actual selected range: a single date when From
+    // equals To (matching the pre-existing single-date format), a range
+    // otherwise. Falls back to today's date only if the range inputs are
+    // missing entirely (shouldn't happen — defensive only).
+    let filenameDatePart;
+    if (fromVal && toVal) {
+      filenameDatePart = fromVal === toVal ? fromVal : (fromVal + "_to_" + toVal);
+    } else {
+      filenameDatePart = localDateInputValue(new Date());
+    }
+    XLSX.writeFile(workbook, "hvac-daily-log-" + filenameDatePart + ".xlsx");
   } catch (err) {
     console.error("Failed to export daily log to Excel:", err);
     alert("Couldn't export the log — see the browser console for details.");
@@ -2117,6 +2206,12 @@ async function init() {
   } finally {
     setLoadingIndicator(false);
     refreshStatusesUI();
+    // The initial defaults (set in wireDailyLogControls, before this load
+    // finished) fell back to today's date since LOG_ROWS/FINDING_UPDATES_LIST
+    // were still empty — recompute now against the real loaded data, but only
+    // if the user hasn't already touched the inputs during the brief loading
+    // window.
+    if (!exportRangeUserEdited) setExportRangeDefaults();
     renderDailyLogView();
     renderFindingsView();
     renderOverviewView();
