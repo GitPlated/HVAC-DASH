@@ -90,6 +90,106 @@ const CATEGORY_COLORS = {
   mechanical: { fill: "#46525c", stroke: "#6f7a84", text: "#eef2f6" }
 };
 
+// ---------------------------------------------------------------- identity
+// "Acting as" identity gate — attribution + a visual "who am I" indicator by
+// explicit design, NOT real authentication (anyone can pick any name; there
+// is no password). Deliberately NOT persisted anywhere (no localStorage/
+// sessionStorage) — every fresh page load, and every explicit "Switch",
+// resets to no-actor-selected and shows the gate again.
+//
+// Admin is view-only: every edit affordance (segmented Not-checked/OK/
+// Attention buttons, the oil-level <select>, every notes input + Save
+// button, the finding update form/"Add update", and "Reset all entries")
+// must be hidden or disabled and genuinely non-interactive under Admin —
+// canEdit() below is the single source of truth every one of those call
+// sites checks (both to disable at render time AND to early-return inside
+// the click/change handler itself, so nothing is reachable through devtools
+// DOM tampering either).
+const IDENTITY_OPTIONS = [
+  { id: "brett", name: "Brett Stone", themeClass: "identity-theme-brett" },
+  { id: "jacolby", name: "Jacolby Moffett", themeClass: "identity-theme-jacolby" },
+  { id: "john", name: "John Danhoff", themeClass: "identity-theme-john" },
+  { id: "admin", name: "Admin", themeClass: null, isAdmin: true }
+];
+const IDENTITY_BY_ID = {};
+IDENTITY_OPTIONS.forEach(function (o) { IDENTITY_BY_ID[o.id] = o; });
+
+let CURRENT_IDENTITY = null; // null until a gate option is picked (or after Switch)
+let CURRENT_PANEL_CHECKPOINT = null; // checkpoint behind the open slide-over, if any — lets a mid-session Switch rebuild it in place
+
+// True only for a real named user — false for Admin AND for the
+// no-identity-picked-yet state (the gate should be covering the screen in
+// that case, but every write/edit path checks this too, belt-and-suspenders).
+function canEdit() {
+  return !!(CURRENT_IDENTITY && !CURRENT_IDENTITY.isAdmin);
+}
+
+function isAdminView() {
+  return !!(CURRENT_IDENTITY && CURRENT_IDENTITY.isAdmin);
+}
+
+// Display name to stamp on writes — null when there's no real actor (Admin
+// can't reach any write path anyway, since every edit affordance is disabled
+// or hidden for it).
+function currentActorName() {
+  return canEdit() ? CURRENT_IDENTITY.name : null;
+}
+
+function applyIdentityTheme(identity) {
+  IDENTITY_OPTIONS.forEach(function (o) {
+    if (o.themeClass) document.body.classList.remove(o.themeClass);
+  });
+  if (identity && identity.themeClass) document.body.classList.add(identity.themeClass);
+}
+
+function updateActingAsUI() {
+  const nameEl = document.getElementById("acting-as-name");
+  const viewOnlyEl = document.getElementById("acting-as-viewonly");
+  const resetBtn = document.getElementById("btn-reset");
+  if (nameEl) nameEl.textContent = CURRENT_IDENTITY ? CURRENT_IDENTITY.name : "—";
+  if (viewOnlyEl) viewOnlyEl.hidden = !isAdminView();
+  // Admin can't see the "Reset all entries" button at all — not merely
+  // disabled — and it also stays hidden before anyone has picked an
+  // identity yet.
+  if (resetBtn) resetBtn.hidden = !canEdit();
+}
+
+function showIdentityGate() {
+  CURRENT_IDENTITY = null;
+  applyIdentityTheme(null);
+  updateActingAsUI();
+  const gate = document.getElementById("identity-gate");
+  if (gate) gate.hidden = false;
+}
+
+function hideIdentityGate() {
+  const gate = document.getElementById("identity-gate");
+  if (gate) gate.hidden = true;
+}
+
+function selectIdentity(identityId) {
+  const identity = IDENTITY_BY_ID[identityId];
+  if (!identity) return;
+  CURRENT_IDENTITY = identity;
+  applyIdentityTheme(identity);
+  updateActingAsUI();
+  hideIdentityGate();
+  // Re-render anything whose edit-affordance/attribution state depends on
+  // the actor so a mid-session Switch takes effect immediately, with no page
+  // reload — including the currently-open slide-over panel, if any.
+  refreshStatusesUI();
+  if (CURRENT_PANEL_CHECKPOINT) buildPanelBody(CURRENT_PANEL_CHECKPOINT);
+  renderFindingsView();
+}
+
+function wireIdentityGate() {
+  document.querySelectorAll(".identity-card").forEach(function (card) {
+    card.addEventListener("click", function () { selectIdentity(card.dataset.identity); });
+  });
+  const switchBtn = document.getElementById("btn-switch-identity");
+  if (switchBtn) switchBtn.addEventListener("click", showIdentityGate);
+}
+
 // ---------------------------------------------------------------- storage
 const CACHE = { group: {}, sub: {} };
 
@@ -590,7 +690,18 @@ function buildUpdateForm(opts) {
   cancelBtn.className = "btn";
   cancelBtn.textContent = "Cancel";
 
+  // View-only (Admin, or no identity picked yet) never gets a live form —
+  // callers below only open this form when canEdit() already passed — but
+  // disable + early-return here too, defense in depth against any future
+  // call site that forgets the check.
+  if (!canEdit()) {
+    textarea.disabled = true;
+    saveBtn.disabled = true;
+    buttons.forEach(function (x) { x.el.disabled = true; });
+  }
+
   saveBtn.addEventListener("click", function () {
+    if (!canEdit()) return;
     const msg = textarea.value.trim();
     if (!msg) {
       err.textContent = "A message is required.";
@@ -633,6 +744,10 @@ function renderFindingTimeline(container, findingId) {
     ts.className = "finding-timeline-time";
     ts.textContent = new Date(u.created_at).toLocaleString();
     meta.appendChild(ts);
+    const actorSpan = document.createElement("span");
+    actorSpan.className = "finding-timeline-actor";
+    actorSpan.textContent = u.actor || "Unknown";
+    meta.appendChild(actorSpan);
     meta.appendChild(buildFindingStatusBadge(u.status));
     entry.appendChild(meta);
     const msg = document.createElement("div");
@@ -647,15 +762,15 @@ function renderFindingTimeline(container, findingId) {
 // Saves a finding update (creating a new finding if none is unresolved yet)
 // and, when alsoLogToggle is true, also appends a checklist_log row so the
 // raw toggle reflects "Attention" and the change shows up in the Daily Log.
-function saveFindingUpdate(checkpointId, itemKey, existingFinding, status, message, alsoLogToggle, notes) {
+function saveFindingUpdate(checkpointId, itemKey, existingFinding, status, message, alsoLogToggle, notes, actor) {
   const findingPromise = existingFinding
-    ? ChecklistStore.addFindingUpdate(existingFinding.id, status, message)
-    : ChecklistStore.createFinding(checkpointId, itemKey, status, message);
+    ? ChecklistStore.addFindingUpdate(existingFinding.id, status, message, actor)
+    : ChecklistStore.createFinding(checkpointId, itemKey, status, message, actor);
 
   return findingPromise.then(function (result) {
     applyFindingResult(result.finding, result.update);
     if (!alsoLogToggle) return;
-    return ChecklistStore.appendLogEntry(checkpointId, itemKey, "attention", null, notes || "")
+    return ChecklistStore.appendLogEntry(checkpointId, itemKey, "attention", null, notes || "", actor)
       .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); });
   });
 }
@@ -723,6 +838,10 @@ function buildCheckRow(checkpoint, checklistItem) {
   let expanded = false;
 
   const segmented = buildSegmented(current.state, function (newState) {
+    // Admin (and the no-identity-yet state) never gets a live control — the
+    // buttons are disabled below too, but a disabled button shouldn't ever
+    // fire this handler; this is belt-and-suspenders.
+    if (!canEdit()) return;
     if (newState === "attention") {
       // Selecting Attention never half-applies — it only opens the form.
       // The toggle's active class is NOT changed until Save succeeds. If
@@ -742,13 +861,16 @@ function buildCheckRow(checkpoint, checklistItem) {
     setGroupEntryLocal(checkpoint.id, itemKey, newState, prevNotes);
     refreshStatusesUI();
     saveError.hidden = true;
-    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, newState, null, prevNotes)
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, newState, null, prevNotes, currentActorName())
       .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
       .catch(function (err) {
         console.error("Failed to save checklist item to Supabase:", checkpoint.id, itemKey, err);
         saveError.hidden = false;
       });
   });
+  if (!canEdit()) {
+    segmented.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+  }
   head.appendChild(segmented);
   row.appendChild(head);
 
@@ -760,6 +882,7 @@ function buildCheckRow(checkpoint, checklistItem) {
   notesInput.className = "notes-input";
   notesInput.placeholder = "Notes / actual reading";
   notesInput.value = current.notes || "";
+  notesInput.disabled = !canEdit();
 
   // Notes only persist on an explicit Save click now (no more debounce-on-
   // input) — lastSavedNotes tracks what's actually in the database so the
@@ -774,15 +897,16 @@ function buildCheckRow(checkpoint, checklistItem) {
   notesSaveBtn.disabled = true;
 
   notesInput.addEventListener("input", function () {
-    notesSaveBtn.disabled = (notesInput.value === lastSavedNotes);
+    notesSaveBtn.disabled = !canEdit() || (notesInput.value === lastSavedNotes);
   });
 
   notesSaveBtn.addEventListener("click", function () {
+    if (!canEdit()) return;
     const stateNow = (getGroupEntries(checkpoint.id)[itemKey] || {}).state || "not_checked";
     const notesVal = notesInput.value;
     saveError.hidden = true;
     notesSaveBtn.disabled = true;
-    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, stateNow, null, notesVal)
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, stateNow, null, notesVal, currentActorName())
       .then(function (logRow) {
         if (logRow) LOG_ROWS.push(logRow);
         setGroupEntryLocal(checkpoint.id, itemKey, stateNow, notesVal);
@@ -791,7 +915,7 @@ function buildCheckRow(checkpoint, checklistItem) {
       .catch(function (err) {
         console.error("Failed to save checklist notes to Supabase:", checkpoint.id, itemKey, err);
         saveError.hidden = false;
-        notesSaveBtn.disabled = (notesInput.value === lastSavedNotes);
+        notesSaveBtn.disabled = !canEdit() || (notesInput.value === lastSavedNotes);
       });
   });
 
@@ -815,7 +939,7 @@ function buildCheckRow(checkpoint, checklistItem) {
       const formEl = buildUpdateForm({
         defaultStatus: "in_progress",
         onSave: function (status, message) {
-          return saveFindingUpdate(checkpoint.id, itemKey, targetFinding, status, message, alsoLogToggle, notesInput.value)
+          return saveFindingUpdate(checkpoint.id, itemKey, targetFinding, status, message, alsoLogToggle, notesInput.value, currentActorName())
             .then(function () {
               formMode = null;
               expanded = true;
@@ -867,12 +991,13 @@ function buildCheckRow(checkpoint, checklistItem) {
       renderFindingTimeline(timelineWrap, finding.id);
       findingArea.appendChild(timelineWrap);
 
-      if (isUnresolved) {
+      if (isUnresolved && canEdit()) {
         const addBtn = document.createElement("button");
         addBtn.type = "button";
         addBtn.className = "btn finding-add-update-btn";
         addBtn.textContent = "Add update";
         addBtn.addEventListener("click", function () {
+          if (!canEdit()) return;
           formMode = { kind: "append", finding: finding, alsoLogToggle: false };
           renderFindingArea();
         });
@@ -945,12 +1070,14 @@ function buildSubRow(checkpoint, sub) {
     if (stored.oilLevel === pair[0]) opt.selected = true;
     select.appendChild(opt);
   });
+  select.disabled = !canEdit();
   select.addEventListener("change", function () {
+    if (!canEdit()) return;
     const existingNotes = getSubEntry(checkpoint.id, sub.designation).notes;
     setSubEntryLocal(checkpoint.id, sub.designation, select.value, existingNotes);
     refreshStatusesUI();
     saveError.hidden = true;
-    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(select.value), existingNotes)
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(select.value), existingNotes, currentActorName())
       .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
       .catch(function (err) {
         console.error("Failed to save oil level to Supabase:", checkpoint.id, sub.designation, err);
@@ -964,6 +1091,7 @@ function buildSubRow(checkpoint, sub) {
   notesInput.className = "notes-input sub-notes-input";
   notesInput.placeholder = "Notes";
   notesInput.value = stored.notes || "";
+  notesInput.disabled = !canEdit();
 
   // See the matching comment in buildCheckRow() — notes only persist on an
   // explicit Save click now.
@@ -976,15 +1104,16 @@ function buildSubRow(checkpoint, sub) {
   notesSaveBtn.disabled = true;
 
   notesInput.addEventListener("input", function () {
-    notesSaveBtn.disabled = (notesInput.value === lastSavedNotes);
+    notesSaveBtn.disabled = !canEdit() || (notesInput.value === lastSavedNotes);
   });
 
   notesSaveBtn.addEventListener("click", function () {
+    if (!canEdit()) return;
     const existingOil = getSubEntry(checkpoint.id, sub.designation).oilLevel;
     const notesVal = notesInput.value;
     saveError.hidden = true;
     notesSaveBtn.disabled = true;
-    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(existingOil), notesVal)
+    ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(existingOil), notesVal, currentActorName())
       .then(function (logRow) {
         if (logRow) LOG_ROWS.push(logRow);
         setSubEntryLocal(checkpoint.id, sub.designation, existingOil, notesVal);
@@ -993,7 +1122,7 @@ function buildSubRow(checkpoint, sub) {
       .catch(function (err) {
         console.error("Failed to save compressor notes to Supabase:", checkpoint.id, sub.designation, err);
         saveError.hidden = false;
-        notesSaveBtn.disabled = (notesInput.value === lastSavedNotes);
+        notesSaveBtn.disabled = !canEdit() || (notesInput.value === lastSavedNotes);
       });
   });
 
@@ -1066,6 +1195,7 @@ function buildPanelBody(checkpoint) {
 
 // -------------------------------------------------------------- slide-over
 function openPanel(checkpoint) {
+  CURRENT_PANEL_CHECKPOINT = checkpoint;
   document.getElementById("panel-title").textContent = checkpoint.equipment;
   const subtitleParts = [];
   if (checkpoint.designation) subtitleParts.push(checkpoint.designation);
@@ -1080,6 +1210,7 @@ function openPanel(checkpoint) {
 }
 
 function closePanel() {
+  CURRENT_PANEL_CHECKPOINT = null;
   document.getElementById("slide-over").classList.remove("is-open");
   document.getElementById("slide-over").setAttribute("aria-hidden", "true");
   document.getElementById("backdrop").classList.remove("is-open");
@@ -1104,7 +1235,8 @@ function buildMergedDailyEntries() {
       kind: "log",
       status: row.status,
       oilLevel: row.oil_level,
-      notes: row.notes
+      notes: row.notes,
+      actor: row.actor
     });
   });
   FINDING_UPDATES_LIST.forEach(function (u) {
@@ -1116,7 +1248,8 @@ function buildMergedDailyEntries() {
       itemKey: finding.item_key,
       kind: "finding_update",
       status: u.status,
-      notes: u.message
+      notes: u.message,
+      actor: u.actor
     });
   });
   return entries;
@@ -1148,7 +1281,13 @@ function buildDailyLogRow(entry) {
 
   const timeEl = document.createElement("div");
   timeEl.className = "log-row-time";
-  timeEl.textContent = entry.ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const timeText = document.createElement("div");
+  timeText.textContent = entry.ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  timeEl.appendChild(timeText);
+  const actorText = document.createElement("div");
+  actorText.className = "log-row-actor";
+  actorText.textContent = entry.actor || "Unknown";
+  timeEl.appendChild(actorText);
   row.appendChild(timeEl);
 
   const mainEl = document.createElement("div");
@@ -1261,7 +1400,8 @@ function buildFindingCard(finding) {
 
   const opened = document.createElement("div");
   opened.className = "finding-card-meta";
-  opened.textContent = "Opened " + new Date(finding.opened_at).toLocaleString();
+  opened.textContent = "Opened " + new Date(finding.opened_at).toLocaleString() +
+    " · Opened by " + (finding.opened_by || "Unknown");
   card.appendChild(opened);
 
   if (finding.resolved_at) {
@@ -1640,6 +1780,11 @@ function wireHeaderControls() {
     document.getElementById("tab-" + id).addEventListener("click", function () { switchTab(id); });
   });
   document.getElementById("btn-reset").addEventListener("click", function () {
+    // Admin genuinely cannot trigger this through any code path — the button
+    // is hidden (not just disabled) for Admin (see updateActingAsUI), and
+    // this is the belt-and-suspenders check in case it's ever unhidden via
+    // devtools DOM tampering.
+    if (isAdminView()) return;
     const ok = confirm("Reset ALL recorded checklist entries and findings for everyone using this dashboard? This cannot be undone.");
     if (!ok) return;
     ChecklistStore.resetAll()
@@ -1694,6 +1839,12 @@ async function init() {
   wireLoadBanner();
   wireDailyLogControls();
   wireFindingsControls();
+  wireIdentityGate();
+  // Gate is visible by default in the HTML (no page-load flash of an
+  // editable dashboard) — this just syncs the "Acting as" header UI (name
+  // placeholder, hidden Reset button/view-only badge) to the no-identity-
+  // selected-yet state.
+  updateActingAsUI();
 
   // Render immediately against an empty cache (-> everything "not_checked")
   // so the UI is never blank/broken while the initial Supabase load is in
@@ -1701,6 +1852,9 @@ async function init() {
   renderFloorSVG();
   renderRoofGrid();
 
+  // Kicked off in parallel with the identity gate being shown (rather than
+  // waiting for a name to be picked first) so data is already loaded by the
+  // time someone picks who they are.
   setLoadingIndicator(true);
   try {
     const bundle = await ChecklistStore.loadAll();

@@ -8,6 +8,32 @@
 </head>
 <body>
 
+<div class="identity-gate" id="identity-gate" role="dialog" aria-modal="true" aria-label="Select who you are">
+  <div class="identity-gate-inner">
+    <h1 class="identity-gate-title">Who's on shift?</h1>
+    <p class="identity-gate-sub">Pick your name so your checks and updates are attributed to you. This resets every time the page loads. Admin is view-only.</p>
+    <div class="identity-gate-grid">
+      <button type="button" class="identity-card identity-theme-brett" data-identity="brett">
+        <span class="identity-card-swatch"></span>
+        <span class="identity-card-name">Brett Stone</span>
+      </button>
+      <button type="button" class="identity-card identity-theme-jacolby" data-identity="jacolby">
+        <span class="identity-card-swatch"></span>
+        <span class="identity-card-name">Jacolby Moffett</span>
+      </button>
+      <button type="button" class="identity-card identity-theme-john" data-identity="john">
+        <span class="identity-card-swatch"></span>
+        <span class="identity-card-name">John Danhoff</span>
+      </button>
+      <button type="button" class="identity-card identity-card-admin" data-identity="admin">
+        <span class="identity-card-swatch"></span>
+        <span class="identity-card-name">Admin</span>
+        <span class="identity-card-badge">View only</span>
+      </button>
+    </div>
+  </div>
+</div>
+
 <header class="app-header">
   <div class="app-header-title">
     <h1>Refrigeration Daily Rounds</h1>
@@ -15,6 +41,12 @@
     <span class="app-header-sub" id="load-status" hidden>· Loading saved entries…</span>
   </div>
   <div class="header-actions">
+    <div class="acting-as" id="acting-as">
+      <span class="acting-as-label">Acting as:</span>
+      <span class="acting-as-name" id="acting-as-name">—</span>
+      <span class="acting-as-viewonly" id="acting-as-viewonly" hidden>View only — Admin</span>
+      <button type="button" class="btn btn-switch" id="btn-switch-identity">Switch</button>
+    </div>
     <div class="view-tabs" role="tablist" aria-label="Dashboard view">
       <button type="button" class="view-tab is-active" id="tab-floor" role="tab" aria-selected="true">Floor Plan</button>
       <button type="button" class="view-tab" id="tab-roof" role="tab" aria-selected="false">Roof Level</button>
@@ -22,7 +54,7 @@
       <button type="button" class="view-tab" id="tab-findings" role="tab" aria-selected="false">Findings</button>
       <button type="button" class="view-tab" id="tab-overview" role="tab" aria-selected="false">Overview</button>
     </div>
-    <button type="button" class="btn btn-danger" id="btn-reset">Reset all entries</button>
+    <button type="button" class="btn btn-danger" id="btn-reset" hidden>Reset all entries</button>
   </div>
 </header>
 

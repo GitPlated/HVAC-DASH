@@ -25,6 +25,7 @@ create table if not exists public.checklist_log (
   status text,                 -- 'not_checked' | 'ok' | 'attention' (group checklist items only)
   oil_level text,                -- '0%' | '25%' | '50%' | '75%' | '100%' (rack subsections only)
   notes text not null default '',
+  actor text,                    -- display name of the selected user at time of write; null for pre-attribution rows
   created_at timestamptz not null default now()
 );
 
@@ -37,7 +38,8 @@ create table if not exists public.findings (
   item_key text not null,
   status text not null default 'in_progress',  -- 'in_progress' | 'monitoring' | 'resolved'
   opened_at timestamptz not null default now(),
-  resolved_at timestamptz
+  resolved_at timestamptz,
+  opened_by text                -- display name of the user who opened it; cached from the first finding_updates.actor
 );
 
 create index if not exists findings_checkpoint on public.findings (checkpoint_id, item_key);
@@ -48,6 +50,7 @@ create table if not exists public.finding_updates (
   finding_id bigint not null references public.findings (id) on delete cascade,
   status text not null,        -- 'in_progress' | 'monitoring' | 'resolved' — status as of THIS update
   message text not null,
+  actor text,                    -- display name of the user who logged this update; null for pre-attribution rows
   created_at timestamptz not null default now()
 );
 
@@ -79,3 +82,13 @@ drop policy if exists "Allow anon insert" on public.finding_updates;
 create policy "Allow anon insert" on public.finding_updates for insert to anon with check (true);
 drop policy if exists "Allow anon delete" on public.finding_updates;
 create policy "Allow anon delete" on public.finding_updates for delete to anon using (true); -- Reset all entries only
+
+-- v3: change attribution — the three named users (Brett Stone, Jacolby
+-- Moffett, John Danhoff) each sign their writes with their display name;
+-- "Admin" is view-only and never appears as an actor. These ALTER statements
+-- are what actually apply to an already-existing database (the CREATE TABLE
+-- blocks above are no-ops once the tables exist) — run this file again after
+-- an update, it's safe either way.
+alter table public.checklist_log add column if not exists actor text;
+alter table public.finding_updates add column if not exists actor text;
+alter table public.findings add column if not exists opened_by text;

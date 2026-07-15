@@ -57,6 +57,26 @@
     return initError ? Promise.reject(initError) : null;
   }
 
+  // ------------------------------------------------------- actor attribution
+  // The `actor` (checklist_log / finding_updates) and `opened_by` (findings)
+  // columns are a recent addition (see supabase/schema.sql) and may not have
+  // been migrated onto the live project yet at the moment a client loads
+  // this file. PostgREST HARD-ERRORS an insert that references a column the
+  // table doesn't have (it does not silently drop unknown keys), so every
+  // write below that includes one of these columns retries once, with that
+  // column stripped, if-and-only-if the failure looks like exactly that
+  // "unknown column" case. This keeps every write succeeding (with
+  // attribution simply absent) whether or not the migration has landed yet,
+  // instead of every checklist save starting to fail the moment this feature
+  // ships.
+  function isMissingColumnError(error, columnName) {
+    if (!error) return false;
+    if (error.code === "42703" || error.code === "PGRST204") return true;
+    const haystack = [error.message, error.details, error.hint].filter(Boolean).join(" ").toLowerCase();
+    return haystack.indexOf(columnName.toLowerCase()) !== -1 &&
+      (haystack.indexOf("column") !== -1 || haystack.indexOf("schema cache") !== -1);
+  }
+
   // ------------------------------------------------------------ checklist_log
 
   async function loadLog() {
@@ -71,20 +91,23 @@
   // Plain insert — never an upsert. Every status change or reading is a new
   // row. Returns the inserted row (with its real id/created_at) so callers
   // can append it to their local history without a re-fetch.
-  async function appendLogEntry(checkpointId, itemKey, status, oilLevel, notes) {
+  async function appendLogEntry(checkpointId, itemKey, status, oilLevel, notes, actor) {
     const failure = initFailure();
     if (failure) return failure;
 
-    const { data, error } = await client
-      .from(TABLE_LOG)
-      .insert({
-        checkpoint_id: checkpointId,
-        item_key: itemKey,
-        status: status || null,
-        oil_level: oilLevel || null,
-        notes: notes || ""
-      })
-      .select();
+    const payload = {
+      checkpoint_id: checkpointId,
+      item_key: itemKey,
+      status: status || null,
+      oil_level: oilLevel || null,
+      notes: notes || "",
+      actor: actor || null
+    };
+    let { data, error } = await client.from(TABLE_LOG).insert(payload).select();
+    if (error && isMissingColumnError(error, "actor")) {
+      delete payload.actor;
+      ({ data, error } = await client.from(TABLE_LOG).insert(payload).select());
+    }
     if (error) throw error;
     return data && data[0];
   }
@@ -112,28 +135,33 @@
   // Opens a brand-new finding + its first update. Use only when no
   // unresolved finding already exists for this checkpoint+item — callers are
   // responsible for that check (see getItemFindingInfo in app.js).
-  async function createFinding(checkpointId, itemKey, status, message) {
+  async function createFinding(checkpointId, itemKey, status, message, actor) {
     const failure = initFailure();
     if (failure) return failure;
 
     const nowIso = new Date().toISOString();
-    const { data: findingRows, error: findingError } = await client
-      .from(TABLE_FINDINGS)
-      .insert({
-        checkpoint_id: checkpointId,
-        item_key: itemKey,
-        status: status,
-        resolved_at: status === "resolved" ? nowIso : null
-      })
-      .select();
+    const findingPayload = {
+      checkpoint_id: checkpointId,
+      item_key: itemKey,
+      status: status,
+      resolved_at: status === "resolved" ? nowIso : null,
+      opened_by: actor || null
+    };
+    let { data: findingRows, error: findingError } = await client.from(TABLE_FINDINGS).insert(findingPayload).select();
+    if (findingError && isMissingColumnError(findingError, "opened_by")) {
+      delete findingPayload.opened_by;
+      ({ data: findingRows, error: findingError } = await client.from(TABLE_FINDINGS).insert(findingPayload).select());
+    }
     if (findingError) throw findingError;
     const finding = findingRows && findingRows[0];
     if (!finding) throw new Error("createFinding: insert returned no row");
 
-    const { data: updateRows, error: updateError } = await client
-      .from(TABLE_FINDING_UPDATES)
-      .insert({ finding_id: finding.id, status: status, message: message })
-      .select();
+    const updatePayload = { finding_id: finding.id, status: status, message: message, actor: actor || null };
+    let { data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select();
+    if (updateError && isMissingColumnError(updateError, "actor")) {
+      delete updatePayload.actor;
+      ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
+    }
     if (updateError) throw updateError;
 
     return { finding: finding, update: updateRows && updateRows[0] };
@@ -142,14 +170,16 @@
   // Appends an update to an EXISTING finding and updates that finding's own
   // status (and resolved_at, when the new status is "resolved"). Never
   // creates a duplicate finding.
-  async function addFindingUpdate(findingId, status, message) {
+  async function addFindingUpdate(findingId, status, message, actor) {
     const failure = initFailure();
     if (failure) return failure;
 
-    const { data: updateRows, error: updateError } = await client
-      .from(TABLE_FINDING_UPDATES)
-      .insert({ finding_id: findingId, status: status, message: message })
-      .select();
+    const updatePayload = { finding_id: findingId, status: status, message: message, actor: actor || null };
+    let { data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select();
+    if (updateError && isMissingColumnError(updateError, "actor")) {
+      delete updatePayload.actor;
+      ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
+    }
     if (updateError) throw updateError;
 
     const nowIso = new Date().toISOString();

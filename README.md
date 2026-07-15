@@ -57,6 +57,20 @@ pulsating red indicator on the map and its Roof Level card, and shows up
 on the **Findings** tab, which lists every tracked issue and its full
 update history.
 
+## Who's on shift
+
+On every page load, a gate asks who's using the dashboard: **Brett Stone**,
+**Jacolby Moffett**, **John Danhoff** (each with their own accent color
+theme, applied to the header/tabs/buttons while they're active), or
+**Admin** (view-only — every edit control is hidden). This is attribution,
+not authentication: there's no password, and nothing stops someone from
+picking a different name than their own. It resets every time the page
+loads — nobody inherits the last person's identity on a shared device.
+
+Every checklist change and finding update is signed with whoever was
+selected at the time, shown in the Daily Log and Findings tabs. Rows from
+before this feature existed show "Unknown."
+
 ## Running locally
 
 No build step, no dependencies. Just open `index.html` in a browser, or
