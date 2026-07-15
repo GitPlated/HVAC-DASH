@@ -112,6 +112,33 @@
     return data && data[0];
   }
 
+  // Updates ONLY notes (+ actor) on an already-existing checklist_log row —
+  // used when a note is saved right after the status/oil-level click that
+  // just inserted that same row, so one atomic "I checked this, here's a
+  // note" action produces exactly one row instead of two. Deliberately never
+  // touches created_at (the original check's timestamp must stay put) or
+  // status/oil_level (those belong to the original insert only — see
+  // js/app.js's pendingRowId tracking in buildCheckRow/buildSubRow for the
+  // insert-vs-update decision). Requires the "Allow anon update" RLS policy
+  // on checklist_log (see supabase/schema.sql) — if that policy (or this
+  // function) isn't live on the project yet, this simply rejects like any
+  // other failed write, and callers fall back exactly like every other
+  // ChecklistStore call site already does (surface the inline save-error
+  // note; never silently swallow).
+  async function updateLogEntryNotes(rowId, notes, actor) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const payload = { notes: notes || "", actor: actor || null };
+    let { data, error } = await client.from(TABLE_LOG).update(payload).eq("id", rowId).select();
+    if (error && isMissingColumnError(error, "actor")) {
+      delete payload.actor;
+      ({ data, error } = await client.from(TABLE_LOG).update(payload).eq("id", rowId).select());
+    }
+    if (error) throw error;
+    return data && data[0];
+  }
+
   // -------------------------------------------------------------- findings
 
   async function loadFindings() {
@@ -235,6 +262,7 @@
     loadAll: loadAll,
     loadLog: loadLog,
     appendLogEntry: appendLogEntry,
+    updateLogEntryNotes: updateLogEntryNotes,
     loadFindings: loadFindings,
     loadFindingUpdates: loadFindingUpdates,
     createFinding: createFinding,

@@ -762,6 +762,11 @@ function renderFindingTimeline(container, findingId) {
 // Saves a finding update (creating a new finding if none is unresolved yet)
 // and, when alsoLogToggle is true, also appends a checklist_log row so the
 // raw toggle reflects "Attention" and the change shows up in the Daily Log.
+// Resolves with { logRow } (logRow is null when alsoLogToggle is false) so
+// callers can track that inserted row as the item's new "pending" row — see
+// the pendingRowId comment in buildCheckRow — consistent with the raw
+// status-toggle path, so a note saved right after going to Attention
+// consolidates into this same row instead of inserting a second one.
 function saveFindingUpdate(checkpointId, itemKey, existingFinding, status, message, alsoLogToggle, notes, actor) {
   const findingPromise = existingFinding
     ? ChecklistStore.addFindingUpdate(existingFinding.id, status, message, actor)
@@ -769,9 +774,12 @@ function saveFindingUpdate(checkpointId, itemKey, existingFinding, status, messa
 
   return findingPromise.then(function (result) {
     applyFindingResult(result.finding, result.update);
-    if (!alsoLogToggle) return;
+    if (!alsoLogToggle) return { logRow: null };
     return ChecklistStore.appendLogEntry(checkpointId, itemKey, "attention", null, notes || "", actor)
-      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); });
+      .then(function (logRow) {
+        if (logRow) LOG_ROWS.push(logRow);
+        return { logRow: logRow || null };
+      });
   });
 }
 
@@ -837,6 +845,18 @@ function buildCheckRow(checkpoint, checklistItem) {
   let formMode = null;
   let expanded = false;
 
+  // Tracks the checklist_log row id just inserted by a status/oil-level
+  // change (or an Attention save, see below) DURING THIS VISIT to this row,
+  // so a subsequent notes Save consolidates into that same row (UPDATE)
+  // instead of inserting a second row for what's really one atomic "I
+  // checked this, here's a note" action. Reset to null before every new
+  // status-change request so a failed write never leaves a stale id around
+  // for notes to silently attach to — a fresh insert is the safe fallback.
+  // A standalone notes save with no pending row (null) still inserts, same
+  // as before this fix. A NEW status change always starts a fresh pending
+  // row, so a genuinely new check event still gets its own history row.
+  let pendingRowId = null;
+
   const segmented = buildSegmented(current.state, function (newState) {
     // Admin (and the no-identity-yet state) never gets a live control — the
     // buttons are disabled below too, but a disabled button shouldn't ever
@@ -861,8 +881,9 @@ function buildCheckRow(checkpoint, checklistItem) {
     setGroupEntryLocal(checkpoint.id, itemKey, newState, prevNotes);
     refreshStatusesUI();
     saveError.hidden = true;
+    pendingRowId = null;
     ChecklistStore.appendLogEntry(checkpoint.id, itemKey, newState, null, prevNotes, currentActorName())
-      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
+      .then(function (logRow) { if (logRow) { LOG_ROWS.push(logRow); pendingRowId = logRow.id; } })
       .catch(function (err) {
         console.error("Failed to save checklist item to Supabase:", checkpoint.id, itemKey, err);
         saveError.hidden = false;
@@ -906,6 +927,28 @@ function buildCheckRow(checkpoint, checklistItem) {
     const notesVal = notesInput.value;
     saveError.hidden = true;
     notesSaveBtn.disabled = true;
+    if (pendingRowId) {
+      // A status change (or an Attention save) already inserted a row for
+      // this visit — attach this note to THAT row instead of inserting a
+      // second one for the same atomic check.
+      const rowId = pendingRowId;
+      ChecklistStore.updateLogEntryNotes(rowId, notesVal, currentActorName())
+        .then(function (logRow) {
+          setGroupEntryLocal(checkpoint.id, itemKey, stateNow, notesVal);
+          lastSavedNotes = notesVal;
+          const idx = LOG_ROWS.findIndex(function (r) { return r.id === rowId; });
+          if (idx >= 0) {
+            LOG_ROWS[idx].notes = notesVal;
+            LOG_ROWS[idx].actor = (logRow && logRow.actor !== undefined) ? logRow.actor : currentActorName();
+          }
+        })
+        .catch(function (err) {
+          console.error("Failed to update checklist notes in Supabase:", checkpoint.id, itemKey, err);
+          saveError.hidden = false;
+          notesSaveBtn.disabled = !canEdit() || (notesInput.value === lastSavedNotes);
+        });
+      return;
+    }
     ChecklistStore.appendLogEntry(checkpoint.id, itemKey, stateNow, null, notesVal, currentActorName())
       .then(function (logRow) {
         if (logRow) LOG_ROWS.push(logRow);
@@ -940,7 +983,7 @@ function buildCheckRow(checkpoint, checklistItem) {
         defaultStatus: "in_progress",
         onSave: function (status, message) {
           return saveFindingUpdate(checkpoint.id, itemKey, targetFinding, status, message, alsoLogToggle, notesInput.value, currentActorName())
-            .then(function () {
+            .then(function (res) {
               formMode = null;
               expanded = true;
               if (alsoLogToggle) {
@@ -951,6 +994,11 @@ function buildCheckRow(checkpoint, checklistItem) {
                 // "last saved" in sync so it doesn't stay wrongly enabled.
                 lastSavedNotes = notesInput.value;
                 notesSaveBtn.disabled = true;
+                // That checklist_log insert becomes this item's pending row
+                // too, same as a plain status click — a note saved right
+                // after going to Attention consolidates into it rather than
+                // inserting a second row.
+                pendingRowId = (res && res.logRow) ? res.logRow.id : null;
               }
               // Always refresh markers/roof cards — a finding's resolution
               // status (and thus the pulsating active-issue indicator) can
@@ -1061,6 +1109,10 @@ function buildSubRow(checkpoint, sub) {
   saveError.textContent = "Couldn't save — check your connection and try again.";
   saveError.hidden = true;
 
+  // See the matching pendingRowId comment in buildCheckRow() — same
+  // insert-then-consolidate behavior for the oil-level select + its notes.
+  let pendingRowId = null;
+
   const select = document.createElement("select");
   select.className = "oil-select";
   [["", "— Select —"], ["0", "0%"], ["25", "25%"], ["50", "50%"], ["75", "75%"], ["100", "100%"]].forEach(function (pair) {
@@ -1077,8 +1129,9 @@ function buildSubRow(checkpoint, sub) {
     setSubEntryLocal(checkpoint.id, sub.designation, select.value, existingNotes);
     refreshStatusesUI();
     saveError.hidden = true;
+    pendingRowId = null;
     ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(select.value), existingNotes, currentActorName())
-      .then(function (logRow) { if (logRow) LOG_ROWS.push(logRow); })
+      .then(function (logRow) { if (logRow) { LOG_ROWS.push(logRow); pendingRowId = logRow.id; } })
       .catch(function (err) {
         console.error("Failed to save oil level to Supabase:", checkpoint.id, sub.designation, err);
         saveError.hidden = false;
@@ -1113,6 +1166,27 @@ function buildSubRow(checkpoint, sub) {
     const notesVal = notesInput.value;
     saveError.hidden = true;
     notesSaveBtn.disabled = true;
+    if (pendingRowId) {
+      // An oil-level change already inserted a row for this visit — attach
+      // this note to THAT row instead of inserting a second one.
+      const rowId = pendingRowId;
+      ChecklistStore.updateLogEntryNotes(rowId, notesVal, currentActorName())
+        .then(function (logRow) {
+          setSubEntryLocal(checkpoint.id, sub.designation, existingOil, notesVal);
+          lastSavedNotes = notesVal;
+          const idx = LOG_ROWS.findIndex(function (r) { return r.id === rowId; });
+          if (idx >= 0) {
+            LOG_ROWS[idx].notes = notesVal;
+            LOG_ROWS[idx].actor = (logRow && logRow.actor !== undefined) ? logRow.actor : currentActorName();
+          }
+        })
+        .catch(function (err) {
+          console.error("Failed to update compressor notes in Supabase:", checkpoint.id, sub.designation, err);
+          saveError.hidden = false;
+          notesSaveBtn.disabled = !canEdit() || (notesInput.value === lastSavedNotes);
+        });
+      return;
+    }
     ChecklistStore.appendLogEntry(checkpoint.id, itemKey, null, oilLocalToDb(existingOil), notesVal, currentActorName())
       .then(function (logRow) {
         if (logRow) LOG_ROWS.push(logRow);

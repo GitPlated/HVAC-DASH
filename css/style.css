@@ -58,25 +58,45 @@
 
 /* ---------------------------------------------------------------------
    Identity theme. Purely a "who am I" attribution feature (no real auth —
-   see js/app.js identity section) — layered onto UI CHROME ONLY (header
-   border, active-tab underline, generic button borders) via the
-   --identity-accent custom property. Deliberately named "identity-theme-*"
-   (not "admin-theme" etc.) to avoid any confusion with the unrelated
-   existing "admin" ROOM category (office/admin floor area) or the
+   see js/app.js identity section) — layered onto UI CHROME (header border,
+   active-tab underline, generic button borders) via --identity-accent, PLUS
+   a clearly-visible page-wide translucent color wash via --identity-wash
+   (applied to body's background, which covers the whole viewport — see
+   body rule below). Deliberately named "identity-theme-*" (not
+   "admin-theme" etc.) to avoid any confusion with the unrelated existing
+   "admin" ROOM category (office/admin floor area) or the
    good/critical/not-checked/resolved STATUS colors — neither of those is
    touched by this feature. Every consumer below reads
-   var(--identity-accent, <original value>) so with no theme class applied
-   (page load, or Admin selected) the chrome renders pixel-identical to
-   before this feature existed.
+   var(--identity-accent, <original value>) / var(--identity-wash, <original
+   value>) so with no theme class applied (page load, or Admin selected) the
+   page renders pixel-identical to before this feature existed.
+   --identity-wash opacity is deliberately different for dark vs light mode
+   (dark backgrounds need a stronger tint to read as an obvious color shift;
+   near-white light backgrounds show even a faint tint clearly) and is kept
+   low enough that it never meaningfully moves the contrast of ink/status/
+   room colors sitting on top of it.
 --------------------------------------------------------------------- */
-.identity-theme-brett   { --identity-accent: #3987e5; }
-.identity-theme-jacolby { --identity-accent: #9085e9; }
-.identity-theme-john    { --identity-accent: #d95926; }
+/* Opacity values below were picked by actually computing WCAG contrast
+   ratios of the app's dimmest text token (--ink-muted, e.g. .hint-text)
+   against the resulting blended background in both schemes, for each
+   identity's hue, and choosing the highest opacity that still keeps a
+   comfortable margin above the 4.5:1 / ~3.5:1 (dark/light — light mode's
+   ink-muted-on-bg-page was already only ~3.5:1 pre-existing, unrelated to
+   this feature) baseline the app already reads at today, while still being
+   an obvious, clearly-perceptible tint at a glance. Dark backgrounds read
+   an obvious color cast even at modest alpha, so 0.10 is enough there;
+   light mode needs to stay lower (0.06–0.07) since near-white bg-page +
+   fully-saturated accent hues erode --ink-muted's margin faster per unit
+   of alpha (jacolby's dark indigo hurts contrast the most per-unit-alpha of
+   the three, hence the slightly lower value). */
+.identity-theme-brett   { --identity-accent: #3987e5; --identity-wash: rgba(57, 135, 229, 0.10); }
+.identity-theme-jacolby { --identity-accent: #9085e9; --identity-wash: rgba(144, 133, 233, 0.10); }
+.identity-theme-john    { --identity-accent: #d95926; --identity-wash: rgba(217, 89, 38, 0.10); }
 
 @media (prefers-color-scheme: light) {
-  .identity-theme-brett   { --identity-accent: #2a78d6; }
-  .identity-theme-jacolby { --identity-accent: #4a3aa7; }
-  .identity-theme-john    { --identity-accent: #eb6834; }
+  .identity-theme-brett   { --identity-accent: #2a78d6; --identity-wash: rgba(42, 120, 214, 0.07); }
+  .identity-theme-jacolby { --identity-accent: #4a3aa7; --identity-wash: rgba(74, 58, 167, 0.06); }
+  .identity-theme-john    { --identity-accent: #eb6834; --identity-wash: rgba(235, 104, 52, 0.07); }
 }
 
 * { box-sizing: border-box; }
@@ -93,6 +113,11 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  /* The identity class lives on <body> itself (see applyIdentityTheme in
+     js/app.js), so this picks up --identity-wash the instant it's set and
+     falls back to the plain page background otherwise (Admin / no identity
+     picked yet — unchanged). */
+  background: var(--identity-wash, var(--bg-page));
 }
 
 button, input, select {
@@ -336,7 +361,7 @@ select:disabled, input:disabled, textarea:disabled {
   font-size: 0.78rem;
   color: var(--ink-secondary);
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--identity-accent, var(--border));
   border-radius: 999px;
   background: var(--bg-panel-raised);
 }
@@ -348,6 +373,29 @@ select:disabled, input:disabled, textarea:disabled {
 .acting-as-name {
   font-weight: 700;
   color: var(--identity-accent, var(--ink-primary));
+}
+
+/* Second, complementary reinforcement of "who's active" alongside the
+   page-wide wash: a solid identity-accent dot next to the name. Kept free
+   of text-on-accent (so there's no accent-background/white-text contrast
+   question to solve per identity/scheme), reusing the same solid-swatch
+   pattern already used on the identity gate cards. Scoped to only render
+   when an identity theme class is actually on <body> (not just a fallback
+   color check), so Admin / no-selection-yet keeps today's plain layout with
+   zero extra space or markup. */
+body[class*="identity-theme-"] .acting-as-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body[class*="identity-theme-"] .acting-as-name::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--identity-accent);
+  flex: none;
 }
 
 .acting-as-viewonly {
@@ -377,7 +425,9 @@ select:disabled, input:disabled, textarea:disabled {
   flex-wrap: wrap;
   padding: 12px 20px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-page);
+  /* Shares the identity wash with body (see body rule above) so there's no
+     visible seam between the two right under the header. */
+  background: var(--identity-wash, var(--bg-page));
 }
 
 .legend-group {
@@ -725,12 +775,24 @@ main {
   border-left: 1px solid var(--border);
 }
 
+/* Generic fallback for ANY segmented control's .is-active button (e.g. the
+   Findings-tab Active/Resolved/All filter, which uses data-filter, and the
+   finding update form's In Progress/Monitoring/Resolved control, which uses
+   no data attribute at all) — both would otherwise inherit only the white
+   text below with no background, since neither matches the data-state
+   selectors that follow. --ink-secondary/--bg-panel are an existing pair
+   that already flips light<->dark per theme (see :root / light-mode
+   overrides above), so pairing them here guarantees real contrast in both
+   color schemes without inventing a new token. The three data-state rules
+   below are more specific (attribute selector) and still win for the
+   Not-checked/OK/Attention control. */
 .segmented button.is-active {
-  color: #fff;
+  background: var(--ink-secondary);
+  color: var(--bg-panel);
 }
 
-.segmented button[data-state="not_checked"].is-active { background: var(--status-notchecked); }
-.segmented button[data-state="ok"].is-active { background: var(--status-good); }
+.segmented button[data-state="not_checked"].is-active { background: var(--status-notchecked); color: #fff; }
+.segmented button[data-state="ok"].is-active { background: var(--status-good); color: #fff; }
 .segmented button[data-state="attention"].is-active { background: var(--status-warning); color: #1a1200; }
 
 .notes-input, .sub-notes-input, textarea.notes-input {

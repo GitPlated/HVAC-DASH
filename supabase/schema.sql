@@ -64,6 +64,8 @@ drop policy if exists "Allow anon read" on public.checklist_log;
 create policy "Allow anon read" on public.checklist_log for select to anon using (true);
 drop policy if exists "Allow anon insert" on public.checklist_log;
 create policy "Allow anon insert" on public.checklist_log for insert to anon with check (true);
+drop policy if exists "Allow anon update" on public.checklist_log;
+create policy "Allow anon update" on public.checklist_log for update to anon using (true) with check (true); -- lets a note be attached to the row a status click just created, instead of a second row
 drop policy if exists "Allow anon delete" on public.checklist_log;
 create policy "Allow anon delete" on public.checklist_log for delete to anon using (true); -- Reset all entries only
 
