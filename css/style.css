@@ -304,9 +304,21 @@ select:disabled, input:disabled, textarea:disabled {
   z-index: 100;
   background: var(--bg-page);
   display: flex;
-  align-items: center;
+  align-items: safe center;
   justify-content: center;
   padding: 24px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Plain "center" ignores overflow and can shift content off-screen at the
+   top with no way to scroll back up to it (the mobile bug this fixes) -
+   "safe center" falls back to start-alignment once content is taller than
+   the viewport, so everything stays reachable by scrolling. Repeated on
+   .identity-gate-inner itself for the handful of browsers that support
+   overflow scrolling on the flex container but not "safe" on align-items. */
+.identity-gate-inner {
+  margin: auto 0;
 }
 
 .identity-gate[hidden] {
@@ -351,6 +363,38 @@ select:disabled, input:disabled, textarea:disabled {
 @media (min-width: 640px) {
   .identity-gate-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Below 640px, 9 cards (already 2-per-row from the auto-fit grid above)
+   still add up to 5 rows — tighten the whole gate's vertical rhythm so
+   less scrolling is needed to reach the bottom (Admin), on top of the
+   overflow-y fix above that guarantees it's reachable either way. */
+@media (max-width: 639px) {
+  .identity-gate {
+    padding: 16px;
+  }
+  .identity-gate-title {
+    font-size: 1.15rem;
+    margin: 0 0 6px;
+  }
+  .identity-gate-sub {
+    font-size: 0.8rem;
+    margin: 0 0 18px;
+  }
+  .identity-gate-grid {
+    gap: 10px;
+  }
+  .identity-card {
+    padding: 16px 10px;
+    gap: 6px;
+  }
+  .identity-card-swatch {
+    width: 26px;
+    height: 26px;
+  }
+  .identity-card-name {
+    font-size: 0.88rem;
   }
 }
 
