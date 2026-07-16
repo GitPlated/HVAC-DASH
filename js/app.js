@@ -2076,12 +2076,17 @@ function wireFindingsControls() {
 
 // -------------------------------------------------------------- overview page
 // Per-day stacked bar chart: one bar per local-calendar day (last 7 days,
-// ending today), each bar a cumulative-as-of-end-of-that-day snapshot across
-// every checkable item in the whole facility — every groupChecklist entry
-// across every EQUIPMENT_GROUPS checkpoint (floor + roof), plus every rack
-// compressor subsection (oil level). Classified into exactly 3 buckets per
-// day — see classifyItemAsOf() below — so every bar's three segments sum to
-// the same total (currently 67) even on the earliest day. Always recomputed
+// ending today), each bar a snapshot of THAT DAY ONLY across every checkable
+// item in the whole facility — every groupChecklist entry across every
+// EQUIPMENT_GROUPS checkpoint (floor + roof), plus every rack compressor
+// subsection (oil level). Nothing carries forward from an earlier day
+// except one deliberate exception: a finding that's still open (unresolved)
+// counts red on every day it remains open, from the day it was opened
+// through the day it's resolved. Everything else (an "ok" check, an oil
+// reading) only counts for the exact day it was logged — checking
+// something OK on Monday does not make it green again on Tuesday. See
+// classifyItemAsOf() below. Every bar's three segments still sum to the
+// same total (currently 67) even on the earliest day. Always recomputed
 // live from LOG_ROWS/FINDINGS_BY_ITEM, never hardcoded.
 
 const OVERVIEW_DAY_COUNT = 7;
@@ -2115,6 +2120,12 @@ function localDayEndMs(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
 }
 
+// Start-of-day (00:00:00.000 local) as an epoch ms number — the other end
+// of the [start, end] window used to test "did this happen ON day D".
+function localDayStartMs(d) {
+  return localDayStart(d).getTime();
+}
+
 // checkpoint_id::item_key -> checklist_log rows for that pair, sorted
 // ascending by created_at. Built once per render and reused across all 7
 // day-cutoffs instead of re-filtering LOG_ROWS from scratch each time.
@@ -2132,47 +2143,57 @@ function buildLogRowsByItem() {
   return idx;
 }
 
-// Classifies a single checkable item as of the END of local day D (cutoffMs
-// = localDayEndMs(D)) — see the task's exact rules:
-//   - rack subsection ("sub:" item_key): green if ANY log row by cutoff,
-//     else grey. Never red (no findings concept for subsections).
-//   - group checklist item: red if ANY finding opened_at <= cutoff (counts
-//     forever, even once resolved). Else green if the latest log row by
-//     cutoff has status "ok". Else grey (not_checked, or never logged yet).
-function classifyItemAsOf(logIndex, checkpointId, itemKey, cutoffMs, isSub) {
+// Classifies a single checkable item for local day D specifically — a
+// snapshot of THAT DAY ONLY, never carried forward from an earlier day,
+// with one deliberate exception: an open (unresolved) finding counts red
+// on every day it remains open, from the day it was opened through the day
+// it's resolved (inclusive) — everything else must have actually happened
+// ON day D to count.
+//   - rack subsection ("sub:" item_key): green if a reading was logged ON
+//     day D itself, else grey. Never red (no findings concept).
+//   - group checklist item: red if any finding for this item was open at
+//     any point during day D (opened on/before D, and not resolved before
+//     D started). Else green if the latest log row logged ON day D itself
+//     has status "ok". Else grey — including an item that was "ok" on some
+//     earlier day but wasn't touched again on day D.
+function classifyItemAsOf(logIndex, checkpointId, itemKey, dayStartMs, dayEndMs, isSub) {
   const rows = logIndex[checkpointId + "::" + itemKey] || [];
+  const rowsThatDay = rows.filter(function (r) {
+    const t = new Date(r.created_at).getTime();
+    return t >= dayStartMs && t <= dayEndMs;
+  });
+
   if (isSub) {
-    const hasAny = rows.some(function (r) { return new Date(r.created_at).getTime() <= cutoffMs; });
-    return hasAny ? "green" : "grey";
+    return rowsThatDay.length ? "green" : "grey";
   }
 
   const findings = FINDINGS_BY_ITEM[checkpointId + "::" + itemKey] || [];
-  const hasFindingByCutoff = findings.some(function (f) { return new Date(f.opened_at).getTime() <= cutoffMs; });
-  if (hasFindingByCutoff) return "red";
+  const openThatDay = findings.some(function (f) {
+    const openedMs = new Date(f.opened_at).getTime();
+    const resolvedMs = f.resolved_at ? new Date(f.resolved_at).getTime() : null;
+    return openedMs <= dayEndMs && (resolvedMs === null || resolvedMs >= dayStartMs);
+  });
+  if (openThatDay) return "red";
 
-  // rows is ascending by created_at — the last one at or before the cutoff
-  // is the latest-as-of-that-day value.
-  let latest = null;
-  for (let i = 0; i < rows.length; i++) {
-    const t = new Date(rows[i].created_at).getTime();
-    if (t <= cutoffMs) latest = rows[i]; else break;
-  }
-  if (latest && latest.status === "ok") return "green";
+  // rowsThatDay is ascending by created_at (filtered from the already-sorted
+  // logIndex array) — the last entry is the latest value logged ON this day.
+  const latestThatDay = rowsThatDay.length ? rowsThatDay[rowsThatDay.length - 1] : null;
+  if (latestThatDay && latestThatDay.status === "ok") return "green";
   return "grey";
 }
 
-function computeOverviewCountsAsOf(logIndex, cutoffMs) {
+function computeOverviewCountsAsOf(logIndex, dayStartMs, dayEndMs) {
   let grey = 0, green = 0, red = 0;
 
   EQUIPMENT_GROUPS.forEach(function (cp) {
     (cp.groupChecklist || []).forEach(function (ci) {
-      const bucket = classifyItemAsOf(logIndex, cp.id, ci.item, cutoffMs, false);
+      const bucket = classifyItemAsOf(logIndex, cp.id, ci.item, dayStartMs, dayEndMs, false);
       if (bucket === "red") red++;
       else if (bucket === "green") green++;
       else grey++;
     });
     (cp.subsections || []).forEach(function (s) {
-      const bucket = classifyItemAsOf(logIndex, cp.id, "sub:" + s.designation, cutoffMs, true);
+      const bucket = classifyItemAsOf(logIndex, cp.id, "sub:" + s.designation, dayStartMs, dayEndMs, true);
       if (bucket === "green") green++;
       else grey++;
     });
@@ -2188,7 +2209,7 @@ function computeOverviewSeries() {
     return {
       day: day,
       label: shortDayLabel(day),
-      counts: computeOverviewCountsAsOf(logIndex, localDayEndMs(day))
+      counts: computeOverviewCountsAsOf(logIndex, localDayStartMs(day), localDayEndMs(day))
     };
   });
 }
