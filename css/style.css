@@ -496,8 +496,34 @@ select:disabled, input:disabled, textarea:disabled {
   text-align: left;
 }
 
-.gate-manage-wrap {
+.gate-onboarding-wrap {
   margin-top: 28px;
+  text-align: center;
+}
+
+/* Deliberately a solid, high-contrast pill (not the faint outline .btn gets
+   elsewhere) — this is a stand-alone invitation, not a form action sitting
+   next to other controls, so it needs to read as a real call-to-action
+   against the plain gate background. Built from the app's own ink/page
+   tokens (inverted) rather than a new accent hue, so it still respects the
+   "color means identity or status" rule and auto-adapts to dark/light. */
+.gate-onboarding-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  background: var(--ink-primary);
+  color: var(--bg-page);
+  border-color: var(--ink-primary);
+}
+
+.gate-onboarding-btn:hover {
+  opacity: 0.85;
+  border-color: var(--ink-primary);
+}
+
+.gate-manage-wrap {
+  margin-top: 14px;
   text-align: center;
 }
 

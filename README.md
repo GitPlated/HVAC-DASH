@@ -79,6 +79,14 @@ not full authentication: there's no login-attempt throttling, so it won't
 stop someone determined to script repeated guesses against it. Reasonable
 for a small trusted team; know that limit going in.
 
+## Expanding to a new site
+
+[`onboarding.html`](onboarding.html) is a self-contained requirements doc for
+standing up this dashboard at another facility — what map, equipment list,
+checklist standards, and staff info we need from them. It's linked from a
+button on the landing (identity) gate and has its own "Print / Save as PDF"
+button, so a site manager can open it and export a PDF without any help.
+
 ## Running locally
 
 No build step, no dependencies. Just open `index.html` in a browser, or
