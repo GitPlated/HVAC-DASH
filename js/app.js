@@ -857,6 +857,70 @@ function buildCompass() {
   return g;
 }
 
+// Compact status tile drawn in the one genuinely empty corner of the
+// 1240x1000 grid — above North Compressor Room (which starts at y=94) and
+// left of Entrance Area (which starts at x=300) — so it scales with the map
+// itself and can never drift over a room at some other viewport width, the
+// way an HTML element absolutely-positioned in screen pixels would. One
+// small cell per roof checkpoint (wraps at 5 per row), colored the same as
+// its marker/card would be; active-issue cells reuse the exact same pulsing
+// glow (.room-alert-ring) the map's room rings use. The whole tile is a
+// single click target straight to the Roof Level tab, NOT a per-cell link —
+// each cell's title tooltip is the only way to see which equipment it is.
+function buildRooftopSnapshot() {
+  const g = svgEl("g", {
+    "class": "rooftop-snapshot-group", tabindex: "0", role: "button",
+    "aria-label": "Rooftop snapshot — click to open the Roof Level tab"
+  });
+
+  const bgX = 20, bgY = 8, bgW = 150, bgH = 78;
+  g.appendChild(svgEl("rect", {
+    x: bgX, y: bgY, width: bgW, height: bgH, rx: 6, ry: 6, "class": "rooftop-snapshot-bg"
+  }));
+
+  const label = svgEl("text", { x: bgX + 10, y: bgY + 14, "class": "rooftop-snapshot-label-svg" });
+  label.textContent = "ROOFTOP SNAPSHOT";
+  g.appendChild(label);
+
+  const roofCps = EQUIPMENT_GROUPS.filter(function (cp) { return cp.roomKey === "roof"; });
+  const cellSize = 16, gap = 4, cols = 5;
+  const gridX = bgX + 10, gridY = bgY + 24;
+  roofCps.forEach(function (cp, i) {
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    const cx = gridX + col * (cellSize + gap);
+    const cy = gridY + row * (cellSize + gap);
+    const status = computeAggregateStatus(cp);
+    const meta = AGGREGATE_STATUS_META[status];
+
+    if (status === "active_issue") {
+      g.appendChild(svgEl("rect", {
+        x: cx - 1.5, y: cy - 1.5, width: cellSize + 3, height: cellSize + 3, rx: 4, ry: 4,
+        "class": "room-alert-ring"
+      }));
+    }
+
+    const cell = svgEl("rect", {
+      x: cx, y: cy, width: cellSize, height: cellSize, rx: 3, ry: 3, "class": "rooftop-snapshot-cell-svg"
+    });
+    cell.style.fill = meta.color;
+    const cellTitle = svgEl("title");
+    cellTitle.textContent = cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "") + " — " + meta.label;
+    cell.appendChild(cellTitle);
+    g.appendChild(cell);
+  });
+
+  g.addEventListener("click", function () { switchTab("roof"); });
+  g.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      switchTab("roof");
+    }
+  });
+
+  return g;
+}
+
 function renderFloorSVG() {
   const svg = document.getElementById("floor-svg");
   svg.innerHTML = "";
@@ -918,6 +982,7 @@ function renderFloorSVG() {
   svg.appendChild(markersG);
 
   svg.appendChild(buildCompass());
+  svg.appendChild(buildRooftopSnapshot());
 }
 
 // -------------------------------------------------------------- legend
@@ -1027,34 +1092,9 @@ function renderRoofGrid() {
   });
 }
 
-// Compact status tile overlaid in the floor-plan map's corner — one small
-// cell per roof checkpoint, colored the same as its marker/card would be
-// (see AGGREGATE_STATUS_META), wrapping at 5 per row. The whole tile is a
-// single click target straight to the Roof Level tab, NOT a per-cell link —
-// each cell's title tooltip is the only way to see which equipment it is.
-function renderRooftopSnapshot() {
-  const grid = document.getElementById("rooftop-snapshot-grid");
-  if (!grid) return;
-  grid.innerHTML = "";
-  EQUIPMENT_GROUPS.filter(function (cp) { return cp.roomKey === "roof"; }).forEach(function (cp) {
-    const meta = AGGREGATE_STATUS_META[computeAggregateStatus(cp)];
-    const cell = document.createElement("span");
-    cell.className = "rooftop-snapshot-cell";
-    cell.style.background = meta.color;
-    cell.title = cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "") + " — " + meta.label;
-    grid.appendChild(cell);
-  });
-}
-
-function wireRooftopSnapshot() {
-  const btn = document.getElementById("rooftop-snapshot");
-  if (btn) btn.addEventListener("click", function () { switchTab("roof"); });
-}
-
 function refreshStatusesUI() {
   renderFloorSVG();
   renderRoofGrid();
-  renderRooftopSnapshot();
 }
 
 // -------------------------------------------------------------- update form
@@ -3001,7 +3041,6 @@ async function init() {
   wireDailyLogControls();
   wireFindingsControls();
   wireOverviewControls();
-  wireRooftopSnapshot();
   wireIdentityGate();
   // Gate is visible by default in the HTML (no page-load flash of an
   // editable dashboard) — this just syncs the "Acting as" header UI (name
@@ -3014,7 +3053,6 @@ async function init() {
   // flight — this doubles as the "loading" state for the map/roof grid.
   renderFloorSVG();
   renderRoofGrid();
-  renderRooftopSnapshot();
 
   // Fire-and-forget: fetches which named users currently have a password set
   // and paints the lock badges once it resolves. Independent of the main
