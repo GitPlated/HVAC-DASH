@@ -1016,6 +1016,25 @@ main {
   margin-top: 2px;
 }
 
+.today-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.today-status-label {
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+}
+
+/* The confirm-OK form is full-width and multi-line — always drop it to its
+   own row under the label/buttons rather than squeezing it into the flex
+   row alongside them. */
+.today-status-row > .update-form {
+  flex: 1 1 100%;
+}
+
 .segmented {
   display: inline-flex;
   border: 1px solid var(--border);

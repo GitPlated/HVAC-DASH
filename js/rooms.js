@@ -43,7 +43,7 @@ const ROOMS = [
   { id: "veggie-holding",    label: "Veggie Holding",     x: 20,  y: 250, w: 260, h: 280, category: "raw" },
   { id: "veggie-staging",    label: "Veggie Staging",     x: 300, y: 300, w: 210, h: 130, category: "raw" },
   { id: "veggie-debox",      label: "Veggie Debox",       x: 520, y: 300, w: 105, h: 180, category: "raw" },
-  { id: "wip-room",          label: "WIP Room",           x: 520, y: 490, w: 105, h: 110, category: "raw" },
+  { id: "wip-room",          label: "Veggie Corridor",    x: 520, y: 490, w: 105, h: 110, category: "raw" },
   { id: "freezer",           label: "Freezer",            x: 20,  y: 546, w: 170, h: 210, category: "raw" },
   { id: "dry-veggie-storage",label: "Dry Veggie Storage", x: 200, y: 546, w: 210, h: 210, category: "raw" },
   { id: "receiving",         label: "Receiving",          x: 20,  y: 772, w: 270, h: 200, category: "raw" },

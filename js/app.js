@@ -593,6 +593,27 @@ function setSubEntryLocal(checkpointId, designation, oilLevel, notes) {
   CACHE.sub[checkpointId][designation] = { oilLevel: oilLevel || "", notes: notes || "" };
 }
 
+// Latest checklist_log row for this item logged strictly within TODAY's
+// local calendar day, or null. Used by the "Update with today's status"
+// control in buildCheckRow to show whether this item has already been
+// reaffirmed today — the segmented control above it shows the last known
+// state EVER instead, which intentionally never resets at midnight (see
+// classifyItemAsOf / computeOverviewCountsAsOf, which already only count an
+// item toward a given day's Overview bar if it was actually touched that
+// day, or has an open finding).
+function getTodaysLogEntry(checkpointId, itemKey) {
+  const startMs = localDayStartMs(new Date());
+  const endMs = localDayEndMs(new Date());
+  let latest = null;
+  LOG_ROWS.forEach(function (r) {
+    if (!r || r.checkpoint_id !== checkpointId || r.item_key !== itemKey) return;
+    const t = new Date(r.created_at).getTime();
+    if (t < startMs || t > endMs) return;
+    if (!latest || t > new Date(latest.created_at).getTime()) latest = r;
+  });
+  return latest;
+}
+
 function oilDbToLocal(oilLevel) {
   return oilLevel ? String(oilLevel).replace("%", "") : "";
 }
@@ -1269,6 +1290,175 @@ function buildCheckRow(checkpoint, checklistItem) {
   }
   head.appendChild(segmented);
   row.appendChild(head);
+
+  // ------------------------------------------------ update with today's status
+  // A deliberate, guided path for reaffirming an item that's already sitting
+  // at "OK" (or any state) from a previous day — clicking a segmented button
+  // above works too (it always logs a fresh row, even re-clicking the
+  // already-active one), but nothing there prompts you to do it or requires
+  // a note, so a status can silently go stale for days with no obvious cue.
+  // This widget always shows whether today's day has been logged yet, and
+  // funnels a fresh entry through a required-notes form (or, for "Needs
+  // attention", straight into the existing finding form below, which already
+  // requires its own message).
+  const todayWrap = document.createElement("div");
+  todayWrap.className = "today-status-row";
+  row.appendChild(todayWrap);
+
+  let todayWidgetMode = null; // null | "choice" | "ok-form"
+
+  function renderTodayWidget() {
+    todayWrap.innerHTML = "";
+
+    const label = document.createElement("span");
+    label.className = "today-status-label";
+    const todaysEntry = getTodaysLogEntry(checkpoint.id, itemKey);
+    if (todaysEntry) {
+      const stateMeta = ITEM_STATE_META[todaysEntry.status] || ITEM_STATE_META.not_checked;
+      const time = new Date(todaysEntry.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      label.textContent = "Logged today (" + stateMeta.label + ") at " + time;
+    } else {
+      label.textContent = "Not yet logged today";
+    }
+    todayWrap.appendChild(label);
+
+    if (todayWidgetMode === "choice") {
+      const choiceGroup = document.createElement("div");
+      choiceGroup.className = "segmented";
+
+      const okBtn = document.createElement("button");
+      okBtn.type = "button";
+      okBtn.innerHTML = iconHTML("ok", 13) + "<span>OK</span>";
+      okBtn.addEventListener("click", function () {
+        todayWidgetMode = "ok-form";
+        renderTodayWidget();
+      });
+      choiceGroup.appendChild(okBtn);
+
+      const attentionBtn = document.createElement("button");
+      attentionBtn.type = "button";
+      attentionBtn.innerHTML = iconHTML("attention", 13) + "<span>Needs attention</span>";
+      attentionBtn.addEventListener("click", function () {
+        if (!canEdit()) return;
+        todayWidgetMode = null;
+        const info = getItemFindingInfo(checkpoint.id, itemKey);
+        formMode = info.unresolved
+          ? { kind: "append", finding: info.unresolved, alsoLogToggle: true }
+          : { kind: "new" };
+        expanded = true;
+        renderTodayWidget();
+        renderFindingArea();
+      });
+      choiceGroup.appendChild(attentionBtn);
+
+      todayWrap.appendChild(choiceGroup);
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", function () {
+        todayWidgetMode = null;
+        renderTodayWidget();
+      });
+      todayWrap.appendChild(cancelBtn);
+      return;
+    }
+
+    if (todayWidgetMode === "ok-form") {
+      const form = document.createElement("div");
+      form.className = "update-form";
+
+      const title = document.createElement("div");
+      title.className = "update-form-title";
+      title.textContent = "Confirm today's status — OK";
+      form.appendChild(title);
+
+      const textarea = document.createElement("textarea");
+      textarea.className = "notes-input update-message-input";
+      textarea.rows = 2;
+      textarea.placeholder = "Notes / actual reading (required)";
+      form.appendChild(textarea);
+
+      const err = document.createElement("div");
+      err.className = "save-error-note";
+      err.hidden = true;
+      form.appendChild(err);
+
+      const actions = document.createElement("div");
+      actions.className = "update-form-actions";
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "btn";
+      saveBtn.textContent = "Save";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn";
+      cancelBtn.textContent = "Cancel";
+
+      if (!canEdit()) {
+        textarea.disabled = true;
+        saveBtn.disabled = true;
+      }
+
+      saveBtn.addEventListener("click", function () {
+        if (!canEdit()) return;
+        const notesVal = textarea.value.trim();
+        if (!notesVal) {
+          err.textContent = "Notes are required to confirm today's status.";
+          err.hidden = false;
+          return;
+        }
+        err.hidden = true;
+        saveBtn.disabled = true;
+        cancelBtn.disabled = true;
+        segmented.setActive("ok");
+        setGroupEntryLocal(checkpoint.id, itemKey, "ok", notesVal);
+        refreshStatusesUI();
+        pendingRowId = null;
+        ChecklistStore.appendLogEntry(checkpoint.id, itemKey, "ok", null, notesVal, currentActorName())
+          .then(function (logRow) {
+            if (logRow) { LOG_ROWS.push(logRow); pendingRowId = logRow.id; }
+            notesInput.value = notesVal;
+            lastSavedNotes = notesVal;
+            notesSaveBtn.disabled = true;
+            todayWidgetMode = null;
+            renderTodayWidget();
+          })
+          .catch(function (e) {
+            console.error("Failed to save today's status to Supabase:", checkpoint.id, itemKey, e);
+            err.textContent = "Couldn't save — check your connection and try again.";
+            err.hidden = false;
+            saveBtn.disabled = false;
+            cancelBtn.disabled = false;
+          });
+      });
+      cancelBtn.addEventListener("click", function () {
+        todayWidgetMode = null;
+        renderTodayWidget();
+      });
+
+      actions.appendChild(saveBtn);
+      actions.appendChild(cancelBtn);
+      form.appendChild(actions);
+      todayWrap.appendChild(form);
+      return;
+    }
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "btn";
+    openBtn.textContent = "Update with today's status";
+    if (!canEdit()) openBtn.disabled = true;
+    openBtn.addEventListener("click", function () {
+      if (!canEdit()) return;
+      todayWidgetMode = "choice";
+      renderTodayWidget();
+    });
+    todayWrap.appendChild(openBtn);
+  }
+
+  renderTodayWidget();
 
   const notesRow = document.createElement("div");
   notesRow.className = "notes-row";
