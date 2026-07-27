@@ -1596,6 +1596,61 @@ button.finding-indicator {
 }
 
 /* ------------------------------------------------------------ overview page */
+.overview-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.overview-range-note {
+  font-size: 0.76rem;
+  color: var(--status-warning);
+}
+
+/* Drill-down list — the slide-over panel's content when it's showing the
+   items behind one Overview bar segment rather than an equipment checklist
+   (see openOverviewDrilldown/buildOverviewDrilldownBody in js/app.js). Each
+   row is a real <button> (not just a styled div) so it's keyboard-operable
+   like every other clickable list in this app. */
+.drilldown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drilldown-row {
+  width: 100%;
+  text-align: left;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drilldown-row:hover,
+.drilldown-row:focus-visible {
+  border-color: var(--ink-muted);
+  background: var(--bg-panel-raised);
+}
+
+.drilldown-row-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.drilldown-row-item {
+  font-size: 0.76rem;
+  color: var(--ink-muted);
+}
+
 .overview-wrap {
   display: flex;
   gap: 32px;
@@ -1654,6 +1709,17 @@ button.finding-indicator {
 .chart-segment:focus-visible {
   stroke: var(--ink-primary);
   stroke-width: 2px;
+}
+
+/* Only today's bar is drillable (see renderOverviewChart) — a distinct
+   cursor + hover fade is the affordance that a segment is clickable, since
+   every other bar keeps the default (non-interactive) cursor. */
+.chart-segment-drillable {
+  cursor: pointer;
+}
+
+.chart-segment-drillable:hover {
+  opacity: 0.82;
 }
 
 /* Visible count painted directly on a segment (see renderOverviewChart in

@@ -1833,6 +1833,12 @@ function buildPanelBody(checkpoint) {
 }
 
 // -------------------------------------------------------------- slide-over
+function showSlideOver() {
+  document.getElementById("slide-over").classList.add("is-open");
+  document.getElementById("slide-over").setAttribute("aria-hidden", "false");
+  document.getElementById("backdrop").classList.add("is-open");
+}
+
 function openPanel(checkpoint) {
   CURRENT_PANEL_CHECKPOINT = checkpoint;
   document.getElementById("panel-title").textContent = checkpoint.equipment;
@@ -1843,9 +1849,7 @@ function openPanel(checkpoint) {
 
   buildPanelBody(checkpoint);
 
-  document.getElementById("slide-over").classList.add("is-open");
-  document.getElementById("slide-over").setAttribute("aria-hidden", "false");
-  document.getElementById("backdrop").classList.add("is-open");
+  showSlideOver();
 }
 
 function closePanel() {
@@ -2064,6 +2068,24 @@ function wireDailyLogControls() {
   if (exportBtn) exportBtn.addEventListener("click", exportDailyLogToExcel);
 }
 
+// -------------------------------------------------------------- overview page
+// Defaults to the same "last 7 days ending today" window the chart always
+// showed before this range filter existed, so leaving it untouched changes
+// nothing about the default view.
+function wireOverviewControls() {
+  const fromEl = document.getElementById("overview-range-from");
+  const toEl = document.getElementById("overview-range-to");
+  if (!fromEl || !toEl) return;
+
+  const defaultDays = lastNLocalDays(OVERVIEW_DEFAULT_DAY_COUNT);
+  fromEl.value = localDateInputValue(defaultDays[0]);
+  toEl.value = localDateInputValue(defaultDays[defaultDays.length - 1]);
+
+  [fromEl, toEl].forEach(function (el) {
+    el.addEventListener("change", renderOverviewView);
+  });
+}
+
 // -------------------------------------------------------------- excel export
 // One row per entry across the app's merged log history — every
 // checklist_log row and every finding_updates row currently loaded in
@@ -2279,7 +2301,11 @@ function wireFindingsControls() {
 // same total (currently 67) even on the earliest day. Always recomputed
 // live from LOG_ROWS/FINDINGS_BY_ITEM, never hardcoded.
 
-const OVERVIEW_DAY_COUNT = 7;
+const OVERVIEW_DEFAULT_DAY_COUNT = 7;
+// A generous but real ceiling on the Overview date-range filter — protects
+// against a mis-typed "From" date (e.g. a stray year) turning the chart into
+// thousands of unreadable hairline bars. Comfortably covers a full quarter.
+const OVERVIEW_MAX_RANGE_DAYS = 180;
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // Reuses the same local-calendar-day convention as the Daily Log's
@@ -2300,6 +2326,36 @@ function lastNLocalDays(n) {
   const days = [];
   for (let i = n - 1; i >= 0; i--) {
     days.push(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i));
+  }
+  return days;
+}
+
+// Parses a "YYYY-MM-DD" <input type=date> value into a LOCAL midnight Date —
+// deliberately NOT `new Date(s)`, which parses a bare date string as UTC
+// midnight and can land on the wrong local calendar day in any negative-UTC-
+// offset zone (this app's whole local-day convention exists to avoid exactly
+// that class of bug). Returns null for an empty/malformed string.
+function parseLocalDateInputValue(s) {
+  if (!s) return null;
+  const parts = s.split("-");
+  if (parts.length !== 3) return null;
+  const y = Number(parts[0]), m = Number(parts[1]), d = Number(parts[2]);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+// Every local-calendar day in [fromDate, toDate] inclusive (both "YYYY-MM-DD"
+// strings), oldest first. Empty when either date is missing/malformed or the
+// range is backwards.
+function localDaysInRange(fromDate, toDate) {
+  const start = parseLocalDateInputValue(fromDate);
+  const end = parseLocalDateInputValue(toDate);
+  const days = [];
+  if (!start || !end || start > end) return days;
+  let cursor = start;
+  while (cursor <= end) {
+    days.push(cursor);
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
   }
   return days;
 }
@@ -2392,10 +2448,38 @@ function computeOverviewCountsAsOf(logIndex, dayStartMs, dayEndMs) {
   return { grey: grey, green: green, red: red, total: grey + green + red };
 }
 
-// One entry per day: { day: Date, label: "Wed 7/8", counts: {grey,green,red,total} }.
-function computeOverviewSeries() {
+// Same classification pass as computeOverviewCountsAsOf, but collects the
+// actual items landing in ONE bucket ("red"/"grey"/"green") instead of just
+// counting — powers the Overview drill-down panel. Only ever called for a
+// single day on demand (a click), never for a whole series, so re-walking
+// EQUIPMENT_GROUPS here instead of threading this through the count pass
+// above keeps that hot path (every day in the chart, every render) simple.
+function collectOverviewItemsForBucket(logIndex, dayStartMs, dayEndMs, bucketKey) {
+  const items = [];
+
+  EQUIPMENT_GROUPS.forEach(function (cp) {
+    (cp.groupChecklist || []).forEach(function (ci) {
+      const bucket = classifyItemAsOf(logIndex, cp.id, ci.item, dayStartMs, dayEndMs, false);
+      if (bucket === bucketKey) items.push({ checkpoint: cp, itemKey: ci.item });
+    });
+    (cp.subsections || []).forEach(function (s) {
+      const itemKey = "sub:" + s.designation;
+      const bucket = classifyItemAsOf(logIndex, cp.id, itemKey, dayStartMs, dayEndMs, true);
+      // Subsections only ever classify as green/grey (see classifyItemAsOf) —
+      // matches computeOverviewCountsAsOf treating anything non-green as grey.
+      const mapped = bucket === "green" ? "green" : "grey";
+      if (mapped === bucketKey) items.push({ checkpoint: cp, itemKey: itemKey });
+    });
+  });
+
+  return items;
+}
+
+// One entry per day in [fromDate, toDate] ("YYYY-MM-DD" strings):
+// { day: Date, label: "Wed 7/8", counts: {grey,green,red,total} }.
+function computeOverviewSeries(fromDate, toDate) {
   const logIndex = buildLogRowsByItem();
-  return lastNLocalDays(OVERVIEW_DAY_COUNT).map(function (day) {
+  return localDaysInRange(fromDate, toDate).map(function (day) {
     return {
       day: day,
       label: shortDayLabel(day),
@@ -2613,9 +2697,17 @@ function renderOverviewChart(series) {
   const slot = plotW / series.length;
   const barWidth = Math.min(56, slot * 0.5);
 
+  const todayStr = localDateInputValue(new Date());
+
   series.forEach(function (entry, i) {
     const xCenter = marginLeft + slot * i + slot / 2;
     const barX = xCenter - barWidth / 2;
+    // Drill-down (click a segment -> list of items) is only offered for the
+    // bar representing the ACTUAL current calendar day — not just whichever
+    // bar happens to be rightmost, since a picked date range can end in the
+    // past. Historical days already show their counts; only today's is
+    // something a reader can act on right now.
+    const isToday = localDateInputValue(entry.day) === todayStr;
 
     let cursorY = plotBottom;
     let drawnAny = false;
@@ -2629,8 +2721,11 @@ function renderOverviewChart(series) {
       const rect = svgEl("rect", {
         x: barX, y: rectTop, width: barWidth, height: Math.max(segH, 0.01),
         rx: 1.5, ry: 1.5,
-        tabindex: "0", role: "img", "class": "chart-segment",
-        "aria-label": entry.label + " — " + seg.label + ": " + count + (count === 1 ? " item" : " items")
+        tabindex: "0",
+        role: isToday ? "button" : "img",
+        "class": "chart-segment" + (isToday ? " chart-segment-drillable" : ""),
+        "aria-label": entry.label + " — " + seg.label + ": " + count + (count === 1 ? " item" : " items") +
+          (isToday ? " — click to list these items" : "")
       });
       // Set via inline style (not the `fill` presentation attribute) so the
       // CSS custom property reliably resolves — these are the exact same
@@ -2645,6 +2740,19 @@ function renderOverviewChart(series) {
       rect.addEventListener("mouseleave", hideOverviewTooltip);
       rect.addEventListener("focus", function () { showOverviewTooltip(rect, entry.label, seg.label, count); });
       rect.addEventListener("blur", hideOverviewTooltip);
+
+      if (isToday) {
+        rect.addEventListener("click", function () { openOverviewDrilldown(entry, seg); });
+        // A custom-interactive SVG element needs its own Enter/Space handling
+        // — unlike a real <button>, a focused <rect> never fires "click" from
+        // the keyboard on its own.
+        rect.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openOverviewDrilldown(entry, seg);
+          }
+        });
+      }
 
       barsG.appendChild(rect);
 
@@ -2677,17 +2785,119 @@ function renderOverviewChart(series) {
   svg.appendChild(barsG);
 }
 
+// Fills the (reused) slide-over panel with a plain list of the items behind
+// one bar segment. Each row is itself clickable — jumps straight to that
+// item's own equipment panel via the existing openPanel(), so "show me
+// what's red today" flows directly into "let me go check on one of them"
+// without a second navigation step.
+function buildOverviewDrilldownBody(items) {
+  const body = document.getElementById("panel-body");
+  body.innerHTML = "";
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "Nothing in this category.";
+    body.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "drilldown-list";
+  items.forEach(function (it) {
+    const cp = it.checkpoint;
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "drilldown-row";
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "drilldown-row-name";
+    nameEl.textContent = cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "") + " — " + cp.location;
+    row.appendChild(nameEl);
+
+    const itemEl = document.createElement("div");
+    itemEl.className = "drilldown-row-item";
+    itemEl.textContent = itemDisplayName(cp, it.itemKey);
+    row.appendChild(itemEl);
+
+    row.addEventListener("click", function () { openPanel(cp); });
+    list.appendChild(row);
+  });
+  body.appendChild(list);
+}
+
+// Opens the slide-over as a read-only drill-down list for one bar segment —
+// entry/seg are the same objects renderOverviewChart already built the
+// clicked rect from, so no re-deriving which day/bucket was clicked.
+function openOverviewDrilldown(entry, seg) {
+  const logIndex = buildLogRowsByItem();
+  const items = collectOverviewItemsForBucket(logIndex, localDayStartMs(entry.day), localDayEndMs(entry.day), seg.key);
+
+  CURRENT_PANEL_CHECKPOINT = null;
+  document.getElementById("panel-title").textContent = seg.label;
+  document.getElementById("panel-subtitle").textContent =
+    entry.label + " · " + items.length + (items.length === 1 ? " item" : " items");
+
+  buildOverviewDrilldownBody(items);
+  showSlideOver();
+}
+
+// Reads + validates the Overview date-range inputs. Clamps silently to
+// OVERVIEW_MAX_RANGE_DAYS (keeping the chosen END date and pulling the start
+// forward) rather than rejecting the range outright — a mis-typed "From"
+// a few years back still gets a useful, readable chart instead of a dead
+// end. Returns { from: null, to: null } (no clamp flag) for anything
+// unparsable or backwards, letting the caller fall back gracefully.
+function getOverviewRangeValues() {
+  const fromEl = document.getElementById("overview-range-from");
+  const toEl = document.getElementById("overview-range-to");
+  if (!fromEl || !toEl) return { from: null, to: null, clamped: false };
+
+  let fromStr = fromEl.value;
+  const toStr = toEl.value;
+  const fromD = parseLocalDateInputValue(fromStr);
+  const toD = parseLocalDateInputValue(toStr);
+  if (!fromD || !toD || fromD > toD) return { from: null, to: null, clamped: false };
+
+  const spanDays = Math.round((toD - fromD) / 86400000) + 1;
+  let clamped = false;
+  if (spanDays > OVERVIEW_MAX_RANGE_DAYS) {
+    const clampedFrom = new Date(toD.getFullYear(), toD.getMonth(), toD.getDate() - (OVERVIEW_MAX_RANGE_DAYS - 1));
+    fromStr = localDateInputValue(clampedFrom);
+    clamped = true;
+  }
+  return { from: fromStr, to: toStr, clamped: clamped };
+}
+
 function renderOverviewView() {
   const countsEl = document.getElementById("overview-counts");
   const legendEl = document.getElementById("overview-legend");
+  const rangeNoteEl = document.getElementById("overview-range-note");
   if (!countsEl || !legendEl) return;
 
-  const series = computeOverviewSeries();
+  const range = getOverviewRangeValues();
+  if (rangeNoteEl) {
+    rangeNoteEl.hidden = !range.clamped;
+    if (range.clamped) {
+      rangeNoteEl.textContent = "Showing the most recent " + OVERVIEW_MAX_RANGE_DAYS + " days of the selected range.";
+    }
+  }
+
+  const series = computeOverviewSeries(range.from, range.to);
+  if (!series.length) {
+    const svg = document.getElementById("overview-chart-svg");
+    if (svg) svg.innerHTML = "";
+    countsEl.textContent = "Pick a valid \"From\"/\"To\" range to see item status.";
+    legendEl.innerHTML = "";
+    return;
+  }
   renderOverviewChart(series);
 
-  const today = series[series.length - 1].counts;
-  countsEl.textContent = "Today: " + today.green + " OK · " + today.grey + " not checked · " +
-    today.red + " finding" + (today.red === 1 ? "" : "s") + " — " + today.total + " total";
+  const last = series[series.length - 1];
+  const isLastToday = localDateInputValue(last.day) === localDateInputValue(new Date());
+  const counts = last.counts;
+  countsEl.textContent = (isLastToday ? "Today" : last.label) + ": " + counts.green + " OK · " + counts.grey + " not checked · " +
+    counts.red + " finding" + (counts.red === 1 ? "" : "s") + " — " + counts.total + " total";
 
   legendEl.innerHTML = "";
   [
@@ -2765,6 +2975,7 @@ async function init() {
   wireLoadBanner();
   wireDailyLogControls();
   wireFindingsControls();
+  wireOverviewControls();
   wireIdentityGate();
   // Gate is visible by default in the HTML (no page-load flash of an
   // editable dashboard) — this just syncs the "Acting as" header UI (name

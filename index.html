@@ -192,7 +192,14 @@
   </section>
 
   <section class="view-section" id="view-overview">
-    <p class="hint-text">Every checkable item across the whole facility, snapshotted as of the end of each of the last 7 days. Findings anchor at the bottom of every bar so they're never buried.</p>
+    <p class="hint-text">Every checkable item across the whole facility, snapshotted as of the end of each day in the range below. Findings anchor at the bottom of every bar so they're never buried. Click any segment of today's bar to see the items behind it.</p>
+    <div class="overview-controls" id="overview-controls">
+      <label class="log-date-label" for="overview-range-from">From</label>
+      <input type="date" id="overview-range-from" class="log-date-input">
+      <label class="log-date-label" for="overview-range-to">To</label>
+      <input type="date" id="overview-range-to" class="log-date-input">
+      <span class="overview-range-note" id="overview-range-note" hidden></span>
+    </div>
     <div class="overview-wrap">
       <div class="overview-chart-panel">
         <div class="overview-chart-wrap" id="overview-chart-wrap">
