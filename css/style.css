@@ -762,10 +762,58 @@ main {
 }
 
 .map-wrap {
+  position: relative;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px;
+}
+
+/* Compact status tile overlaid on the map's corner — see
+   renderRooftopSnapshot in js/app.js. A single click target (the whole tile
+   jumps to the Roof Level tab), not one link per cell. */
+.rooftop-snapshot {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.rooftop-snapshot:hover,
+.rooftop-snapshot:focus-visible {
+  border-color: var(--ink-muted);
+}
+
+.rooftop-snapshot-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.rooftop-snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.rooftop-snapshot-cell {
+  width: 13px;
+  height: 13px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.3);
 }
 
 #floor-svg {

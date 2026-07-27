@@ -151,12 +151,16 @@
   <section class="view-section is-active" id="view-floor">
     <div class="map-wrap">
       <svg id="floor-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      <button type="button" class="rooftop-snapshot" id="rooftop-snapshot" aria-label="Rooftop snapshot — click to open the Roof Level tab">
+        <span class="rooftop-snapshot-label">Rooftop Snapshot</span>
+        <div class="rooftop-snapshot-grid" id="rooftop-snapshot-grid"></div>
+      </button>
     </div>
-    <p class="hint-text">Click any marker to open its checklist. Dashed rings mark an assumed equipment location — confirm on-site.</p>
+    <p class="hint-text">Click any marker to open its checklist. Dashed rings mark an assumed equipment location — confirm on-site. The Rooftop Snapshot tile (top right) opens the Roof Level tab.</p>
   </section>
 
   <section class="view-section" id="view-roof">
-    <p class="hint-text">Roof-mounted equipment also has its own markers in the Roof Level band at the bottom of the Floor Plan map. Click a card to open its checklist.</p>
+    <p class="hint-text">Roof-mounted equipment isn't on the interior floor plan — see the Rooftop Snapshot tile in the map's corner, or click a card below to open its checklist.</p>
     <div class="roof-grid" id="roof-grid"></div>
   </section>
 

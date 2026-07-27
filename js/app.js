@@ -87,8 +87,7 @@ const CATEGORY_COLORS = {
   raw: { fill: "#1b3a5c", stroke: "#3d6690", text: "#eef2f6" },
   cooked: { fill: "#f2f0e7", stroke: "rgba(20,20,15,0.35)", text: "#23231f" },
   admin: { fill: "#8a8d93", stroke: "rgba(255,255,255,0.25)", text: "#1a1a1a" },
-  mechanical: { fill: "#46525c", stroke: "#6f7a84", text: "#eef2f6" },
-  roof: { fill: "#6b5a42", stroke: "#9c8a6e", text: "#f5f0e6" }
+  mechanical: { fill: "#46525c", stroke: "#6f7a84", text: "#eef2f6" }
 };
 
 // ---------------------------------------------------------------- identity
@@ -750,15 +749,11 @@ function computeAggregateStatus(checkpoint) {
 const ROOMS_BY_ID = {};
 ROOMS.forEach(function (r) { ROOMS_BY_ID[r.id] = r; });
 
-// Every checkpoint is grouped by roomKey here, roof included — a "roof"
-// pseudo-room in ROOMS (see js/rooms.js) gives roof equipment a marker on
-// the map exactly like any other room's equipment; renderRoofGrid() below
-// separately builds the Roof Level tab's cards straight from EQUIPMENT_GROUPS,
-// so the same checkpoint ends up represented in both places, never a fork.
 const CHECKPOINTS_BY_ROOM = {};
 const EQUIPMENT_BY_ID = {};
 EQUIPMENT_GROUPS.forEach(function (cp) {
   EQUIPMENT_BY_ID[cp.id] = cp;
+  if (cp.roomKey === "roof") return;
   if (!CHECKPOINTS_BY_ROOM[cp.roomKey]) CHECKPOINTS_BY_ROOM[cp.roomKey] = [];
   CHECKPOINTS_BY_ROOM[cp.roomKey].push(cp);
 });
@@ -1032,9 +1027,34 @@ function renderRoofGrid() {
   });
 }
 
+// Compact status tile overlaid in the floor-plan map's corner — one small
+// cell per roof checkpoint, colored the same as its marker/card would be
+// (see AGGREGATE_STATUS_META), wrapping at 5 per row. The whole tile is a
+// single click target straight to the Roof Level tab, NOT a per-cell link —
+// each cell's title tooltip is the only way to see which equipment it is.
+function renderRooftopSnapshot() {
+  const grid = document.getElementById("rooftop-snapshot-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  EQUIPMENT_GROUPS.filter(function (cp) { return cp.roomKey === "roof"; }).forEach(function (cp) {
+    const meta = AGGREGATE_STATUS_META[computeAggregateStatus(cp)];
+    const cell = document.createElement("span");
+    cell.className = "rooftop-snapshot-cell";
+    cell.style.background = meta.color;
+    cell.title = cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "") + " — " + meta.label;
+    grid.appendChild(cell);
+  });
+}
+
+function wireRooftopSnapshot() {
+  const btn = document.getElementById("rooftop-snapshot");
+  if (btn) btn.addEventListener("click", function () { switchTab("roof"); });
+}
+
 function refreshStatusesUI() {
   renderFloorSVG();
   renderRoofGrid();
+  renderRooftopSnapshot();
 }
 
 // -------------------------------------------------------------- update form
@@ -2981,6 +3001,7 @@ async function init() {
   wireDailyLogControls();
   wireFindingsControls();
   wireOverviewControls();
+  wireRooftopSnapshot();
   wireIdentityGate();
   // Gate is visible by default in the HTML (no page-load flash of an
   // editable dashboard) — this just syncs the "Acting as" header UI (name
@@ -2993,6 +3014,7 @@ async function init() {
   // flight — this doubles as the "loading" state for the map/roof grid.
   renderFloorSVG();
   renderRoofGrid();
+  renderRooftopSnapshot();
 
   // Fire-and-forget: fetches which named users currently have a password set
   // and paints the lock badges once it resolves. Independent of the main
