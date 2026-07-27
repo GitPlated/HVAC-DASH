@@ -1,6 +1,7 @@
 /*
  * Facility floor plan — redrawn/cleaned up from the reference sketch, on a
- * 1240 x 1000 SVG grid, north-up (matches the reference orientation).
+ * 1240 x 1000 (interior) SVG grid, north-up (matches the reference
+ * orientation), plus a dedicated Roof Level band below the interior rooms.
  *
  * category drives fill color:
  *   raw         -> navy blue  (matches source legend: "Raw Area")
@@ -8,14 +9,17 @@
  *   admin       -> neutral gray (office/entrance/hallway, non-production)
  *   mechanical  -> slate (compressor rooms — not on the source sketch; placed
  *                 by name logic: "next to MRE" / "behind Large Dishroom")
+ *   roof        -> warm tan/brown (the "roof" pseudo-room below — every
+ *                 checkpoint with roomKey "roof" gets a marker here, exactly
+ *                 like any other room; see CHECKPOINTS_BY_ROOM in js/app.js)
  *
- * Roof-mounted equipment (Rack Condensers, RTU, DOAS, MAU, Blast Chiller
- * Condensing Units) has roomKey "roof" and is intentionally NOT drawn here —
- * it isn't part of this interior floor plan, so it renders in a separate
- * Roof Level panel in the UI instead of being forced onto this map.
+ * Roof-mounted equipment (Rack Condensers, room condensers, RTU, DOAS, MAU,
+ * Blast Chiller Condensing Units) also still gets its own card grid in the
+ * separate Roof Level tab — the map marker and that card are two views onto
+ * the exact same checkpoint, not a duplicate/competing data source.
  */
 
-const VIEWBOX = { w: 1240, h: 1000 };
+const VIEWBOX = { w: 1240, h: 1190 };
 
 const ROOMS = [
   // ---- admin / non-production (context only, no equipment) ----
@@ -56,14 +60,18 @@ const ROOMS = [
   { id: "holding-cooler",      label: "Holding Cooler",       x: 766,  y: 300, w: 110, h: 270, category: "cooked" },
   { id: "production-plating",  label: "Production Plating",   x: 890,  y: 254, w: 132, h: 406, category: "cooked" },
   { id: "production-sleeving", label: "Production Sleeving",  x: 1030, y: 330, w: 90,  h: 330, category: "cooked" },
-  { id: "shipping",             label: "Shipping",            x: 1126, y: 330, w: 94,  h: 330, category: "cooked" }
+  { id: "shipping",             label: "Shipping",            x: 1126, y: 330, w: 94,  h: 330, category: "cooked" },
+
+  // ---- roof level (see the file-header comment above) ----
+  { id: "roof", label: "Roof Level", x: 20, y: 1010, w: 1200, h: 150, category: "roof" }
 ];
 
 const ROOM_LEGEND = [
   { category: "raw", label: "Raw Area" },
   { category: "cooked", label: "Cooked Area" },
   { category: "mechanical", label: "Mechanical Room" },
-  { category: "admin", label: "Office / Admin" }
+  { category: "admin", label: "Office / Admin" },
+  { category: "roof", label: "Roof Level" }
 ];
 
 if (typeof module !== "undefined") module.exports = { VIEWBOX, ROOMS, ROOM_LEGEND };

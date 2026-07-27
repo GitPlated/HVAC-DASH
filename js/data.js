@@ -92,6 +92,59 @@ const EQUIPMENT_GROUPS = [
       { item: "Fans", expected: "All functioning properly" }
     ]
   },
+  // ------------------------------------------------------- ROOM CONDENSERS
+  // Rooftop condensing units for individual interior rooms — same checklist
+  // as the Rack Condensers above. The Veggie Staging pair's model/serials
+  // match the indoor half of the "Evaporators (EV 1 & 2 split system)" entry
+  // further down — this is that same split system's outdoor unit.
+  {
+    id: "condenser-freezer",
+    equipment: "Freezer Condenser",
+    location: "Rooftop — serves Freezer",
+    roomKey: "roof",
+    roomConfidence: "confirmed",
+    units: [
+      { model: "Heatcraft - BEH092SD86EMAB0457 / T21M18851" },
+      { model: "Heatcraft - BEH092SD86EMAB0457 / T21M18852" }
+    ],
+    groupChecklist: [
+      { item: "Visual Inspection", expected: "No abnormal noise, rust, leaks" },
+      { item: "Cleanliness", expected: "Clean coils, with good airflow" },
+      { item: "Fans", expected: "All functioning properly" }
+    ]
+  },
+  {
+    id: "condenser-shipping",
+    equipment: "Shipping Condenser",
+    location: "Rooftop — serves Shipping",
+    roomKey: "roof",
+    roomConfidence: "confirmed",
+    units: [
+      { model: "Heatcraft - BEH1313D56AYAD0764 / T21A0682" },
+      { model: "Heatcraft - BEH1313D6AYAD0764 / T21A06863" }
+    ],
+    groupChecklist: [
+      { item: "Visual Inspection", expected: "No abnormal noise, rust, leaks" },
+      { item: "Cleanliness", expected: "Clean coils, with good airflow" },
+      { item: "Fans", expected: "All functioning properly" }
+    ]
+  },
+  {
+    id: "condenser-veggie-staging",
+    equipment: "Veggie Staging Condenser",
+    location: "Rooftop — serves Veggie Staging",
+    roomKey: "roof",
+    roomConfidence: "confirmed",
+    units: [
+      { model: "Heatcraft - BEM0850M56EPAD4541 / T22H12673" },
+      { model: "Heatcraft - BEM0850M56EPAD4541 / T22H12674" }
+    ],
+    groupChecklist: [
+      { item: "Visual Inspection", expected: "No abnormal noise, rust, leaks" },
+      { item: "Cleanliness", expected: "Clean coils, with good airflow" },
+      { item: "Fans", expected: "All functioning properly" }
+    ]
+  },
   // -------------------------------------------------------- EVAPORATORS (13 zones)
   {
     id: "evap-veg-cooler",

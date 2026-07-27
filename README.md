@@ -10,8 +10,9 @@ Sheet and a hand-drawn facility floor plan.
   evaporator, RTU, DOAS, MAU, and blast chiller placed in its checklist
   location.
 - Roof-mounted equipment (condensers, RTU, DOAS, MAU, blast chiller
-  condensing units) isn't on the interior floor plan — it lives in the
-  **Roof Level** panel instead.
+  condensing units) gets its own **Roof Level** band at the bottom of the
+  floor plan map, plus its own card grid in the separate **Roof Level** tab —
+  the same checkpoint shown two ways, not two separate data sources.
 - Clicking any equipment marker opens a checklist panel with the expected
   standard for each item and a place to record what you actually observed.
 
