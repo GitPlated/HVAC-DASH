@@ -129,6 +129,13 @@
 .identity-theme-ronald  { --identity-accent: #f55a00; --identity-wash: rgba(245, 90, 0, 0.10); }
 .identity-theme-wilberth{ --identity-accent: #0ac2c2; --identity-wash: rgba(10, 194, 194, 0.10); }
 .identity-theme-tyler   { --identity-accent: #e619c3; --identity-wash: rgba(230, 25, 195, 0.10); }
+/* Andrew Wu — the sandbox identity (see IDENTITY_OPTIONS/isSandboxActor in
+   js/app.js). Deliberately a muted indigo/slate-blue rather than a fully
+   vivid hue like the 8 real-technician accents above: it sits in the widest
+   open gap on the wheel (between Brett's blue and David's purple) so it's
+   still clearly its own color, but the lower saturation is itself a quiet
+   visual cue that this identity behaves differently. */
+.identity-theme-andrew  { --identity-accent: #6d7fd1; --identity-wash: rgba(109, 127, 209, 0.10); }
 
 @media (prefers-color-scheme: light) {
   .identity-theme-brett   { --identity-accent: #2a78d6; --identity-wash: rgba(42, 120, 214, 0.07); }
@@ -139,6 +146,7 @@
   .identity-theme-ronald  { --identity-accent: #913608; --identity-wash: rgba(145, 54, 8, 0.07); }
   .identity-theme-wilberth{ --identity-accent: #084949; --identity-wash: rgba(8, 73, 73, 0.07); }
   .identity-theme-tyler   { --identity-accent: #c115a4; --identity-wash: rgba(193, 21, 164, 0.07); }
+  .identity-theme-andrew  { --identity-accent: #4a5aa8; --identity-wash: rgba(74, 90, 168, 0.07); }
 }
 
 * { box-sizing: border-box; }
@@ -665,7 +673,10 @@ body[class*="identity-theme-"] .acting-as-name::before {
   flex: none;
 }
 
-.acting-as-viewonly {
+/* Shared "why is this identity different" pill — shows either "View only —
+   Admin" or "Sandbox — changes aren't saved" (see updateActingAsUI in
+   js/app.js); the two are mutually exclusive so one element covers both. */
+.acting-as-note {
   font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -676,7 +687,7 @@ body[class*="identity-theme-"] .acting-as-name::before {
   border-radius: 999px;
 }
 
-.acting-as-viewonly[hidden] {
+.acting-as-note[hidden] {
   display: none;
 }
 

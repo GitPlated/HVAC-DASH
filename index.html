@@ -12,7 +12,7 @@
 <div class="identity-gate" id="identity-gate" role="dialog" aria-modal="true" aria-label="Select who you are">
   <div class="identity-gate-inner">
     <h1 class="identity-gate-title">Who's on shift?</h1>
-    <p class="identity-gate-sub">Pick your name so your checks and updates are attributed to you. This resets every time the page loads. Admin is view-only.</p>
+    <p class="identity-gate-sub">Pick your name so your checks and updates are attributed to you. This resets every time the page loads. Admin is view-only. Andrew Wu is a sandbox — full access, but nothing he does is saved.</p>
     <div class="identity-gate-grid">
       <button type="button" class="identity-card identity-theme-brett" data-identity="brett">
         <span class="identity-card-swatch"></span>
@@ -45,6 +45,11 @@
       <button type="button" class="identity-card identity-theme-tyler" data-identity="tyler">
         <span class="identity-card-swatch"></span>
         <span class="identity-card-name">Tyler Christensen</span>
+      </button>
+      <button type="button" class="identity-card identity-theme-andrew" data-identity="andrew">
+        <span class="identity-card-swatch"></span>
+        <span class="identity-card-name">Andrew Wu</span>
+        <span class="identity-card-badge">Sandbox</span>
       </button>
       <button type="button" class="identity-card identity-card-admin" data-identity="admin">
         <span class="identity-card-swatch"></span>
@@ -116,7 +121,7 @@
     <div class="acting-as" id="acting-as">
       <span class="acting-as-label">Acting as:</span>
       <span class="acting-as-name" id="acting-as-name">—</span>
-      <span class="acting-as-viewonly" id="acting-as-viewonly" hidden>View only — Admin</span>
+      <span class="acting-as-note" id="acting-as-note" hidden></span>
       <button type="button" class="btn btn-switch" id="btn-switch-identity">Switch</button>
     </div>
     <div class="view-tabs" role="tablist" aria-label="Dashboard view">

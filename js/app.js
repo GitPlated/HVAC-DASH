@@ -114,6 +114,12 @@ const IDENTITY_OPTIONS = [
   { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald" },
   { id: "wilberth", name: "Wilberth Carrizal", themeClass: "identity-theme-wilberth" },
   { id: "tyler", name: "Tyler Christensen", themeClass: "identity-theme-tyler" },
+  // Full write access in the UI (canEdit() below treats him like any other
+  // named identity), but every write is intercepted before it reaches
+  // Supabase — see the sandbox guard further down this file, which wraps
+  // ChecklistStore's write methods to fabricate a local-only fake response
+  // whenever the CURRENT identity is flagged isSandbox.
+  { id: "andrew", name: "Andrew Wu", themeClass: "identity-theme-andrew", isSandbox: true },
   { id: "admin", name: "Admin", themeClass: null, isAdmin: true }
 ];
 const IDENTITY_BY_ID = {};
@@ -198,6 +204,104 @@ function isAdminView() {
   return !!(CURRENT_IDENTITY && CURRENT_IDENTITY.isAdmin);
 }
 
+// Andrew Wu only — canEdit() above is already true for him (he's not
+// Admin), so every checklist/finding/notes control behaves normally. This
+// just flags the identity so the ChecklistStore sandbox guard below knows to
+// fake his writes instead of sending them to Supabase.
+function isSandboxActor() {
+  return !!(CURRENT_IDENTITY && CURRENT_IDENTITY.isSandbox);
+}
+
+// ----------------------------------------------------------- sandbox guard
+// Wraps the four ChecklistStore methods app.js ever writes through so that,
+// whenever the CURRENT identity is flagged isSandbox (Andrew Wu), each one
+// fabricates a locally-unique fake row instead of touching Supabase, and
+// resolves with exactly the shape the real call would have produced — every
+// existing .then() handler in this file (which pushes the result into
+// LOG_ROWS / FINDINGS_LIST / FINDING_UPDATES_LIST) needs no sandbox-specific
+// logic of its own, and behaves identically whether the row is real or fake.
+// Fake ids count down from -1 (real Postgres ids are always positive serials,
+// so collision is impossible) — negative ids also make a fake row easy to
+// spot while debugging.
+//
+// This wraps the SHARED ChecklistStore object itself, once, rather than
+// adding an isSandboxActor() check at each of app.js's call sites — the
+// point is that the "never persists" guarantee can't be broken by a call
+// site this file adds later and forgets to guard; there's nothing to forget,
+// because there's no per-call-site checklist to keep in sync in the first
+// place. Reloading the page always restores the true, actually-persisted
+// state, since none of this ever reached the database.
+(function installSandboxGuard() {
+  let nextFakeId = -1;
+
+  const realAppendLogEntry = ChecklistStore.appendLogEntry;
+  ChecklistStore.appendLogEntry = function (checkpointId, itemKey, status, oilLevel, notes, actor) {
+    if (!isSandboxActor()) return realAppendLogEntry.apply(ChecklistStore, arguments);
+    return Promise.resolve({
+      id: nextFakeId--,
+      checkpoint_id: checkpointId,
+      item_key: itemKey,
+      status: status || null,
+      oil_level: oilLevel || null,
+      notes: notes || "",
+      actor: actor || null,
+      created_at: new Date().toISOString()
+    });
+  };
+
+  const realUpdateLogEntryNotes = ChecklistStore.updateLogEntryNotes;
+  ChecklistStore.updateLogEntryNotes = function (rowId, notes, actor) {
+    if (!isSandboxActor()) return realUpdateLogEntryNotes.apply(ChecklistStore, arguments);
+    return Promise.resolve({ id: rowId, notes: notes || "", actor: actor || null });
+  };
+
+  const realCreateFinding = ChecklistStore.createFinding;
+  ChecklistStore.createFinding = function (checkpointId, itemKey, status, message, actor) {
+    if (!isSandboxActor()) return realCreateFinding.apply(ChecklistStore, arguments);
+    const nowIso = new Date().toISOString();
+    const findingId = nextFakeId--;
+    return Promise.resolve({
+      finding: {
+        id: findingId, checkpoint_id: checkpointId, item_key: itemKey,
+        status: status, opened_at: nowIso, resolved_at: status === "resolved" ? nowIso : null,
+        opened_by: actor || null
+      },
+      update: {
+        id: nextFakeId--, finding_id: findingId, status: status, message: message,
+        actor: actor || null, created_at: nowIso
+      }
+    });
+  };
+
+  const realAddFindingUpdate = ChecklistStore.addFindingUpdate;
+  ChecklistStore.addFindingUpdate = function (findingId, status, message, actor) {
+    if (!isSandboxActor()) return realAddFindingUpdate.apply(ChecklistStore, arguments);
+    const nowIso = new Date().toISOString();
+    // The existing finding may be perfectly real (opened by someone else
+    // before Andrew switched in) — applyFindingResult() REPLACES the whole
+    // FINDINGS_LIST entry with whatever this resolves, so every field that
+    // isn't changing here must still be carried forward, or this update
+    // would silently blank out checkpoint_id/item_key/opened_at going
+    // forward for the rest of Andrew's session.
+    const existing = FINDINGS_BY_ID[findingId] || {};
+    return Promise.resolve({
+      finding: {
+        id: findingId,
+        checkpoint_id: existing.checkpoint_id,
+        item_key: existing.item_key,
+        opened_at: existing.opened_at,
+        opened_by: existing.opened_by,
+        status: status,
+        resolved_at: status === "resolved" ? nowIso : null
+      },
+      update: {
+        id: nextFakeId--, finding_id: findingId, status: status, message: message,
+        actor: actor || null, created_at: nowIso
+      }
+    });
+  };
+})();
+
 // Display name to stamp on writes — null when there's no real actor (Admin
 // can't reach any write path anyway, since every edit affordance is disabled
 // or hidden for it).
@@ -214,9 +318,21 @@ function applyIdentityTheme(identity) {
 
 function updateActingAsUI() {
   const nameEl = document.getElementById("acting-as-name");
-  const viewOnlyEl = document.getElementById("acting-as-viewonly");
+  const noteEl = document.getElementById("acting-as-note");
   if (nameEl) nameEl.textContent = CURRENT_IDENTITY ? CURRENT_IDENTITY.name : "—";
-  if (viewOnlyEl) viewOnlyEl.hidden = !isAdminView();
+  if (noteEl) {
+    // Mutually exclusive — a single identity is never both Admin and the
+    // sandbox — so one pill covers both "why is this one different" cases.
+    if (isAdminView()) {
+      noteEl.textContent = "View only — Admin";
+      noteEl.hidden = false;
+    } else if (isSandboxActor()) {
+      noteEl.textContent = "Sandbox — changes aren't saved";
+      noteEl.hidden = false;
+    } else {
+      noteEl.hidden = true;
+    }
+  }
 }
 
 function showIdentityGate() {
