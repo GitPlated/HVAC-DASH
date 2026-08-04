@@ -835,13 +835,27 @@ function checkpointHasResolvedFinding(checkpointId) {
 // rebuildFindingMaps), never a separately-stored value, same as every other
 // "current state" derived client-side in this app. Powers the map's
 // per-section "Active Issue Breakdown" tooltip.
+// True if this finding should count as vendor work: EITHER the checkbox was
+// checked on any of its updates, OR any update's message mentions "vendor"
+// at all — a plain-text safety net so an issue someone described as vendor
+// work in the notes (but forgot to check the box for, or logged before this
+// feature existed) still gets classified correctly, not just newly-checked
+// ones. Checks every update, not just the latest, since the mention could
+// have been made earlier in the finding's history.
+function findingMentionsVendor(finding) {
+  const updates = UPDATES_BY_FINDING[finding.id] || [];
+  return updates.some(function (u) {
+    if (u.is_vendor) return true;
+    return typeof u.message === "string" && u.message.toLowerCase().indexOf("vendor") !== -1;
+  });
+}
+
 function computeIssueBreakdownForCheckpoints(checkpointIds) {
   let inHouse = 0, vendor = 0;
   FINDINGS_LIST.forEach(function (f) {
     if (f.status === "resolved") return;
     if (checkpointIds.indexOf(f.checkpoint_id) === -1) return;
-    const latest = (UPDATES_BY_FINDING[f.id] || [])[0];
-    if (latest && latest.is_vendor) vendor++;
+    if (findingMentionsVendor(f)) vendor++;
     else inHouse++;
   });
   return { inHouse: inHouse, vendor: vendor };
@@ -992,79 +1006,31 @@ function buildMarker(checkpoint, cx, cy) {
 }
 
 // -------------------------------------------------------- issue breakdown tooltip
-// Small "Active Issue Breakdown" table shown on hover/focus of a room's alert
-// badge (or the Rooftop Snapshot tile, for the roof "section") — In House
-// Repairs vs. Vendor Outsourced Repairs, per computeRoomIssueBreakdown /
-// computeRoofIssueBreakdown above. #room-issue-tooltip is `position: fixed`
-// and positioned directly from getBoundingClientRect() (viewport-relative,
-// no wrap-offset math needed — unlike the Overview chart's tooltip, nothing
-// here sits inside a scrolling/clipping container), so it can float over the
-// map without being clipped by anything.
-const ROOM_ISSUE_TOOLTIP_GAP = 8;
-let roomIssueTooltipHideTimer = null;
+// Compact, ALWAYS-VISIBLE "In House vs. Vendor Outsourced" breakdown for one
+// section (a room, or the roof) — drawn directly into the section's own SVG
+// cell rather than behind a hover/focus interaction, so the counts read at a
+// glance. Deliberately terse ("IH"/"V", not the full "In House Repairs" /
+// "Vendor Outsourced Repairs" wording used in the Findings tab) since it has
+// to fit inside rooms as narrow as ~90 units wide — the full wording is
+// still available as the group's <title> (native tooltip) and spelled out
+// once in the floor plan's hint text.
+const ISSUE_BADGE_W = 58, ISSUE_BADGE_H = 15;
 
-function showRoomIssueTooltip(targetEl, sectionLabel, breakdown) {
-  const tip = document.getElementById("room-issue-tooltip");
-  if (!tip) return;
-  clearTimeout(roomIssueTooltipHideTimer);
-
-  tip.innerHTML = "";
-  const titleEl = document.createElement("div");
-  titleEl.className = "room-issue-tooltip-title";
-  titleEl.textContent = sectionLabel + " — Active Issue Breakdown";
-  tip.appendChild(titleEl);
-
-  const table = document.createElement("table");
-  table.className = "room-issue-table";
-  [
-    { label: "In House Repairs", count: breakdown.inHouse },
-    { label: "Vendor Outsourced Repairs", count: breakdown.vendor }
-  ].forEach(function (row) {
-    const tr = document.createElement("tr");
-    const tdLabel = document.createElement("td");
-    tdLabel.className = "room-issue-label";
-    tdLabel.textContent = row.label;
-    const tdCount = document.createElement("td");
-    tdCount.className = "room-issue-count";
-    tdCount.textContent = String(row.count);
-    tr.appendChild(tdLabel);
-    tr.appendChild(tdCount);
-    table.appendChild(tr);
+function buildIssueBreakdownBadge(breakdown, x, y) {
+  const g = svgEl("g", { "class": "room-issue-badge", transform: "translate(" + x + "," + y + ")" });
+  g.appendChild(svgEl("rect", {
+    x: 0, y: 0, width: ISSUE_BADGE_W, height: ISSUE_BADGE_H, rx: 3, ry: 3, "class": "room-issue-badge-bg"
+  }));
+  const text = svgEl("text", {
+    x: ISSUE_BADGE_W / 2, y: ISSUE_BADGE_H / 2 + 1,
+    "text-anchor": "middle", "dominant-baseline": "middle", "class": "room-issue-badge-text"
   });
-  tip.appendChild(table);
-
-  // Must be visible BEFORE measuring, or its rendered size reads as 0.
-  tip.hidden = false;
-
-  const targetRect = targetEl.getBoundingClientRect();
-  const tipRect = tip.getBoundingClientRect();
-  const gap = ROOM_ISSUE_TOOLTIP_GAP;
-  const margin = 4;
-
-  const spaceAbove = targetRect.top;
-  const spaceBelow = window.innerHeight - targetRect.bottom;
-  const needed = tipRect.height + gap;
-  let top;
-  if (spaceAbove >= needed) {
-    top = targetRect.top - gap - tipRect.height;
-  } else if (spaceBelow >= needed) {
-    top = targetRect.bottom + gap;
-  } else {
-    top = spaceBelow > spaceAbove ? targetRect.bottom + gap : targetRect.top - gap - tipRect.height;
-  }
-  top = Math.min(Math.max(top, margin), window.innerHeight - tipRect.height - margin);
-
-  let left = targetRect.left + targetRect.width / 2 - tipRect.width / 2;
-  left = Math.min(Math.max(left, margin), window.innerWidth - tipRect.width - margin);
-
-  tip.style.top = top + "px";
-  tip.style.left = left + "px";
-}
-
-function hideRoomIssueTooltip() {
-  const tip = document.getElementById("room-issue-tooltip");
-  if (!tip) return;
-  roomIssueTooltipHideTimer = setTimeout(function () { tip.hidden = true; }, 40);
+  text.textContent = "IH " + breakdown.inHouse + " · V " + breakdown.vendor;
+  g.appendChild(text);
+  const title = svgEl("title");
+  title.textContent = "In House Repairs: " + breakdown.inHouse + " · Vendor Outsourced Repairs: " + breakdown.vendor;
+  g.appendChild(title);
+  return g;
 }
 
 function buildCompass() {
@@ -1085,16 +1051,19 @@ function buildCompass() {
 // way an HTML element absolutely-positioned in screen pixels would. One
 // small cell per roof checkpoint (wraps at 5 per row), colored the same as
 // its marker/card would be; active-issue cells reuse the exact same pulsing
-// glow (.room-alert-ring) the map's room rings use. The whole tile is a
-// single click target straight to the Roof Level tab, NOT a per-cell link —
-// each cell's title tooltip is the only way to see which equipment it is.
+// glow (.room-alert-ring) the map's room rings use, and the tile always
+// shows the roof "section"'s own In House / Vendor breakdown badge (see
+// buildIssueBreakdownBadge) below the grid — same always-visible treatment
+// every room gets, not hover-only. The whole tile is a single click target
+// straight to the Roof Level tab, NOT a per-cell link — each cell's title
+// tooltip is the only way to see which equipment it is.
 function buildRooftopSnapshot() {
   const g = svgEl("g", {
     "class": "rooftop-snapshot-group", tabindex: "0", role: "button",
     "aria-label": "Rooftop snapshot — click to open the Roof Level tab"
   });
 
-  const bgX = 20, bgY = 8, bgW = 150, bgH = 78;
+  const bgX = 20, bgY = 8, bgW = 150, bgH = 92;
   g.appendChild(svgEl("rect", {
     x: bgX, y: bgY, width: bgW, height: bgH, rx: 6, ry: 6, "class": "rooftop-snapshot-bg"
   }));
@@ -1131,6 +1100,8 @@ function buildRooftopSnapshot() {
     g.appendChild(cell);
   });
 
+  g.appendChild(buildIssueBreakdownBadge(computeRoofIssueBreakdown(), bgX + (bgW - ISSUE_BADGE_W) / 2, bgY + 70));
+
   g.addEventListener("click", function () { switchTab("roof"); });
   g.addEventListener("keydown", function (e) {
     if (e.key === "Enter" || e.key === " ") {
@@ -1138,10 +1109,6 @@ function buildRooftopSnapshot() {
       switchTab("roof");
     }
   });
-  g.addEventListener("mouseenter", function () { showRoomIssueTooltip(g, "Roof Level", computeRoofIssueBreakdown()); });
-  g.addEventListener("mouseleave", hideRoomIssueTooltip);
-  g.addEventListener("focus", function () { showRoomIssueTooltip(g, "Roof Level", computeRoofIssueBreakdown()); });
-  g.addEventListener("blur", hideRoomIssueTooltip);
 
   return g;
 }
@@ -1181,20 +1148,11 @@ function renderFloorSVG() {
       alertRect.appendChild(alertTitle);
       roomsG.appendChild(alertRect);
 
-      const badge = svgEl("g", {
-        "class": "room-alert-badge",
-        tabindex: "0", role: "img", "aria-label": room.label + " — active issue, hover for breakdown",
-        transform: "translate(" + (room.x + room.w - 20) + "," + (room.y + 6) + ")"
-      });
-      badge.innerHTML = ICON_SHAPES.active_issue;
-      badge.style.color = AGGREGATE_STATUS_META.active_issue.color;
-      const badgeTitle = svgEl("title");
-      badgeTitle.textContent = "Active issue";
-      badge.appendChild(badgeTitle);
-      badge.addEventListener("mouseenter", function () { showRoomIssueTooltip(badge, room.label, computeRoomIssueBreakdown(room.id)); });
-      badge.addEventListener("mouseleave", hideRoomIssueTooltip);
-      badge.addEventListener("focus", function () { showRoomIssueTooltip(badge, room.label, computeRoomIssueBreakdown(room.id)); });
-      badge.addEventListener("blur", hideRoomIssueTooltip);
+      const badge = buildIssueBreakdownBadge(
+        computeRoomIssueBreakdown(room.id),
+        room.x + room.w - ISSUE_BADGE_W - 4,
+        room.y + 4
+      );
       roomsG.appendChild(badge);
     }
   });

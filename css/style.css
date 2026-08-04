@@ -1854,64 +1854,21 @@ button.finding-indicator {
   margin-top: 2px;
 }
 
-/* Active Issue Breakdown tooltip — see showRoomIssueTooltip in js/app.js.
-   position:fixed (not absolute-in-a-wrap like .overview-chart-tooltip above)
-   since it isn't confined to any single scrolling container; JS sets its
-   exact top/left from getBoundingClientRect(), viewport-relative to match. A
-   capped width forces even the longest row label ("Vendor Outsourced
-   Repairs") to wrap onto two lines rather than stretching the tooltip wide
-   or overflowing its cell. */
-.room-issue-tooltip {
-  position: fixed;
-  z-index: 200;
-  pointer-events: none;
-  width: 200px;
-  background: var(--bg-panel-raised);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  box-shadow: 0 6px 18px var(--shadow);
+/* Active Issue Breakdown badge — see buildIssueBreakdownBadge in js/app.js.
+   Always visible (drawn straight into the room's/roof tile's own SVG cell,
+   not a hover tooltip) so the In House vs. Vendor Outsourced counts read at
+   a glance. Deliberately a fixed dark fill + light text regardless of the
+   room's own category color (navy/cream/slate/grey all vary), so it stays
+   legible sitting on top of any of them. */
+.room-issue-badge-bg {
+  fill: rgba(0, 0, 0, 0.62);
 }
 
-.room-issue-tooltip[hidden] {
-  display: none;
-}
-
-.room-issue-tooltip-title {
-  font-size: 0.68rem;
+.room-issue-badge-text {
+  font-size: 8.5px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--ink-muted);
-  margin-bottom: 6px;
-  white-space: normal;
-  overflow-wrap: break-word;
-}
-
-.room-issue-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.room-issue-table td {
-  padding: 3px 0;
-  font-size: 0.78rem;
-  vertical-align: top;
-}
-
-.room-issue-label {
-  color: var(--ink-secondary);
-  white-space: normal;
-  overflow-wrap: break-word;
-  padding-right: 8px !important;
-}
-
-.room-issue-count {
-  font-weight: 700;
-  color: var(--ink-primary);
-  text-align: right;
-  white-space: nowrap;
-  width: 1%;
+  fill: #ffffff;
+  font-family: var(--font-ui);
 }
 
 .overview-side {
