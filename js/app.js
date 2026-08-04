@@ -842,11 +842,21 @@ function checkpointHasResolvedFinding(checkpointId) {
 // feature existed) still gets classified correctly, not just newly-checked
 // ones. Checks every update, not just the latest, since the mention could
 // have been made earlier in the finding's history.
+// Known outside-vendor company names this facility actually uses — a
+// message naming one of these means vendor work just as surely as the word
+// "vendor" itself (e.g. "Hartwig sending quote for replacement" never says
+// "vendor" but obviously is one). Add to this list as new vendors come up;
+// matching is a plain case-insensitive substring check, same as "vendor".
+const KNOWN_VENDOR_NAMES = ["hartwig", "nesco", "nesko", "ams"];
+
 function findingMentionsVendor(finding) {
   const updates = UPDATES_BY_FINDING[finding.id] || [];
   return updates.some(function (u) {
     if (u.is_vendor) return true;
-    return typeof u.message === "string" && u.message.toLowerCase().indexOf("vendor") !== -1;
+    if (typeof u.message !== "string") return false;
+    const msg = u.message.toLowerCase();
+    if (msg.indexOf("vendor") !== -1) return true;
+    return KNOWN_VENDOR_NAMES.some(function (name) { return msg.indexOf(name) !== -1; });
   });
 }
 
@@ -1063,7 +1073,11 @@ function buildRooftopSnapshot() {
     "aria-label": "Rooftop snapshot — click to open the Roof Level tab"
   });
 
-  const bgX = 20, bgY = 8, bgW = 150, bgH = 92;
+  // Wide enough for the status-cell grid AND the breakdown badge side by
+  // side — stacking the badge below the grid (like a room's bottom-center
+  // placement) would overlap the grid's own second row, since this tile has
+  // much less vertical room to spare than a full room rect does.
+  const bgX = 20, bgY = 8, bgW = 202, bgH = 78;
   g.appendChild(svgEl("rect", {
     x: bgX, y: bgY, width: bgW, height: bgH, rx: 6, ry: 6, "class": "rooftop-snapshot-bg"
   }));
@@ -1075,6 +1089,9 @@ function buildRooftopSnapshot() {
   const roofCps = EQUIPMENT_GROUPS.filter(function (cp) { return cp.roomKey === "roof"; });
   const cellSize = 16, gap = 4, cols = 5;
   const gridX = bgX + 10, gridY = bgY + 24;
+  const gridW = cols * cellSize + (cols - 1) * gap;
+  const gridRows = Math.ceil(roofCps.length / cols);
+  const gridH = gridRows * cellSize + (gridRows - 1) * gap;
   roofCps.forEach(function (cp, i) {
     const row = Math.floor(i / cols);
     const col = i % cols;
@@ -1100,7 +1117,13 @@ function buildRooftopSnapshot() {
     g.appendChild(cell);
   });
 
-  g.appendChild(buildIssueBreakdownBadge(computeRoofIssueBreakdown(), bgX + (bgW - ISSUE_BADGE_W) / 2, bgY + 70));
+  // To the right of the grid, vertically centered on it — never below, so it
+  // can't ever land on top of the grid's own bottom row.
+  g.appendChild(buildIssueBreakdownBadge(
+    computeRoofIssueBreakdown(),
+    gridX + gridW + 8,
+    gridY + (gridH - ISSUE_BADGE_H) / 2
+  ));
 
   g.addEventListener("click", function () { switchTab("roof"); });
   g.addEventListener("keydown", function (e) {
@@ -1150,8 +1173,8 @@ function renderFloorSVG() {
 
       const badge = buildIssueBreakdownBadge(
         computeRoomIssueBreakdown(room.id),
-        room.x + room.w - ISSUE_BADGE_W - 4,
-        room.y + 4
+        room.x + (room.w - ISSUE_BADGE_W) / 2,
+        room.y + room.h - ISSUE_BADGE_H - 4
       );
       roomsG.appendChild(badge);
     }
