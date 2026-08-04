@@ -58,23 +58,33 @@
   }
 
   // ------------------------------------------------------- actor attribution
-  // The `actor` (checklist_log / finding_updates) and `opened_by` (findings)
-  // columns are a recent addition (see supabase/schema.sql) and may not have
-  // been migrated onto the live project yet at the moment a client loads
-  // this file. PostgREST HARD-ERRORS an insert that references a column the
-  // table doesn't have (it does not silently drop unknown keys), so every
-  // write below that includes one of these columns retries once, with that
-  // column stripped, if-and-only-if the failure looks like exactly that
-  // "unknown column" case. This keeps every write succeeding (with
-  // attribution simply absent) whether or not the migration has landed yet,
-  // instead of every checklist save starting to fail the moment this feature
-  // ships.
+  // The `actor` (checklist_log / finding_updates), `opened_by` (findings), and
+  // `is_vendor` (finding_updates) columns were each added after this table
+  // already existed (see supabase/schema.sql) and may not have been migrated
+  // onto the live project yet at the moment a client loads this file.
+  // PostgREST HARD-ERRORS an insert that references a column the table
+  // doesn't have (it does not silently drop unknown keys), so every write
+  // below that includes one of these columns retries once, with that column
+  // stripped, if-and-only-if the failure looks like exactly that "unknown
+  // column" case FOR THIS SPECIFIC COLUMN. This keeps every write succeeding
+  // (with that one piece of data simply absent) whether or not the migration
+  // has landed yet, instead of every checklist save starting to fail the
+  // moment a feature like this ships.
+  //
+  // columnName must actually appear in the error text — a bare 42703/PGRST204
+  // code is NOT enough on its own to identify WHICH column is missing.
+  // createFinding/addFindingUpdate below check two DIFFERENT optional columns
+  // in sequence against the same failed insert's error; a code-only match
+  // would say "yes" to both checks for a single-column failure, incorrectly
+  // stripping a column that was never actually the problem (verified: this
+  // silently dropped `actor` on every finding_updates write while only
+  // `is_vendor` was actually missing, before this comment/fix).
   function isMissingColumnError(error, columnName) {
     if (!error) return false;
-    if (error.code === "42703" || error.code === "PGRST204") return true;
     const haystack = [error.message, error.details, error.hint].filter(Boolean).join(" ").toLowerCase();
-    return haystack.indexOf(columnName.toLowerCase()) !== -1 &&
-      (haystack.indexOf("column") !== -1 || haystack.indexOf("schema cache") !== -1);
+    if (haystack.indexOf(columnName.toLowerCase()) === -1) return false;
+    return error.code === "42703" || error.code === "PGRST204" ||
+      haystack.indexOf("column") !== -1 || haystack.indexOf("schema cache") !== -1;
   }
 
   // ------------------------------------------------------------ checklist_log
@@ -162,7 +172,7 @@
   // Opens a brand-new finding + its first update. Use only when no
   // unresolved finding already exists for this checkpoint+item — callers are
   // responsible for that check (see getItemFindingInfo in app.js).
-  async function createFinding(checkpointId, itemKey, status, message, actor) {
+  async function createFinding(checkpointId, itemKey, status, message, actor, isVendor) {
     const failure = initFailure();
     if (failure) return failure;
 
@@ -183,10 +193,14 @@
     const finding = findingRows && findingRows[0];
     if (!finding) throw new Error("createFinding: insert returned no row");
 
-    const updatePayload = { finding_id: finding.id, status: status, message: message, actor: actor || null };
+    const updatePayload = { finding_id: finding.id, status: status, message: message, actor: actor || null, is_vendor: !!isVendor };
     let { data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select();
     if (updateError && isMissingColumnError(updateError, "actor")) {
       delete updatePayload.actor;
+      ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
+    }
+    if (updateError && isMissingColumnError(updateError, "is_vendor")) {
+      delete updatePayload.is_vendor;
       ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
     }
     if (updateError) throw updateError;
@@ -197,14 +211,18 @@
   // Appends an update to an EXISTING finding and updates that finding's own
   // status (and resolved_at, when the new status is "resolved"). Never
   // creates a duplicate finding.
-  async function addFindingUpdate(findingId, status, message, actor) {
+  async function addFindingUpdate(findingId, status, message, actor, isVendor) {
     const failure = initFailure();
     if (failure) return failure;
 
-    const updatePayload = { finding_id: findingId, status: status, message: message, actor: actor || null };
+    const updatePayload = { finding_id: findingId, status: status, message: message, actor: actor || null, is_vendor: !!isVendor };
     let { data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select();
     if (updateError && isMissingColumnError(updateError, "actor")) {
       delete updatePayload.actor;
+      ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
+    }
+    if (updateError && isMissingColumnError(updateError, "is_vendor")) {
+      delete updatePayload.is_vendor;
       ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
     }
     if (updateError) throw updateError;

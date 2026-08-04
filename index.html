@@ -157,8 +157,14 @@
     <div class="map-wrap">
       <svg id="floor-svg" xmlns="http://www.w3.org/2000/svg"></svg>
     </div>
-    <p class="hint-text">Click any marker to open its checklist. Dashed rings mark an assumed equipment location — confirm on-site. The Rooftop Snapshot tile (top left) opens the Roof Level tab.</p>
+    <p class="hint-text">Click any marker to open its checklist. Dashed rings mark an assumed equipment location — confirm on-site. The Rooftop Snapshot tile (top left) opens the Roof Level tab; hover a red active-issue badge for its In House / Vendor Outsourced breakdown.</p>
   </section>
+
+  <!-- Active Issue Breakdown tooltip — shown on hover/focus of a room's alert
+       badge or the Rooftop Snapshot tile (see showRoomIssueTooltip in
+       js/app.js). position:fixed, so it lives outside .map-wrap and is
+       positioned directly in viewport coordinates. -->
+  <div class="room-issue-tooltip" id="room-issue-tooltip" hidden></div>
 
   <section class="view-section" id="view-roof">
     <p class="hint-text">Roof-mounted equipment isn't on the interior floor plan — see the Rooftop Snapshot tile in the map's corner, or click a card below to open its checklist.</p>

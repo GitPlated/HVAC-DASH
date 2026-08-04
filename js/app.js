@@ -256,7 +256,7 @@ function isSandboxActor() {
   };
 
   const realCreateFinding = ChecklistStore.createFinding;
-  ChecklistStore.createFinding = function (checkpointId, itemKey, status, message, actor) {
+  ChecklistStore.createFinding = function (checkpointId, itemKey, status, message, actor, isVendor) {
     if (!isSandboxActor()) return realCreateFinding.apply(ChecklistStore, arguments);
     const nowIso = new Date().toISOString();
     const findingId = nextFakeId--;
@@ -268,13 +268,13 @@ function isSandboxActor() {
       },
       update: {
         id: nextFakeId--, finding_id: findingId, status: status, message: message,
-        actor: actor || null, created_at: nowIso
+        actor: actor || null, is_vendor: !!isVendor, created_at: nowIso
       }
     });
   };
 
   const realAddFindingUpdate = ChecklistStore.addFindingUpdate;
-  ChecklistStore.addFindingUpdate = function (findingId, status, message, actor) {
+  ChecklistStore.addFindingUpdate = function (findingId, status, message, actor, isVendor) {
     if (!isSandboxActor()) return realAddFindingUpdate.apply(ChecklistStore, arguments);
     const nowIso = new Date().toISOString();
     // The existing finding may be perfectly real (opened by someone else
@@ -296,7 +296,7 @@ function isSandboxActor() {
       },
       update: {
         id: nextFakeId--, finding_id: findingId, status: status, message: message,
-        actor: actor || null, created_at: nowIso
+        actor: actor || null, is_vendor: !!isVendor, created_at: nowIso
       }
     });
   };
@@ -828,6 +828,35 @@ function checkpointHasResolvedFinding(checkpointId) {
   return FINDINGS_LIST.some(function (f) { return f.checkpoint_id === checkpointId && f.status === "resolved"; });
 }
 
+// { inHouse: N, vendor: M } — tallies every UNRESOLVED finding belonging to
+// any of the given checkpoint ids by whether it's currently vendor work: a
+// finding's CURRENT classification is always its most recent update's
+// is_vendor flag (UPDATES_BY_FINDING is sorted newest-first — see
+// rebuildFindingMaps), never a separately-stored value, same as every other
+// "current state" derived client-side in this app. Powers the map's
+// per-section "Active Issue Breakdown" tooltip.
+function computeIssueBreakdownForCheckpoints(checkpointIds) {
+  let inHouse = 0, vendor = 0;
+  FINDINGS_LIST.forEach(function (f) {
+    if (f.status === "resolved") return;
+    if (checkpointIds.indexOf(f.checkpoint_id) === -1) return;
+    const latest = (UPDATES_BY_FINDING[f.id] || [])[0];
+    if (latest && latest.is_vendor) vendor++;
+    else inHouse++;
+  });
+  return { inHouse: inHouse, vendor: vendor };
+}
+
+function computeRoomIssueBreakdown(roomId) {
+  const cps = CHECKPOINTS_BY_ROOM[roomId] || [];
+  return computeIssueBreakdownForCheckpoints(cps.map(function (cp) { return cp.id; }));
+}
+
+function computeRoofIssueBreakdown() {
+  const ids = EQUIPMENT_GROUPS.filter(function (cp) { return cp.roomKey === "roof"; }).map(function (cp) { return cp.id; });
+  return computeIssueBreakdownForCheckpoints(ids);
+}
+
 // -------------------------------------------------------------- aggregate
 /*
  * Aggregate status for a checkpoint's marker / card color:
@@ -962,6 +991,82 @@ function buildMarker(checkpoint, cx, cy) {
   return g;
 }
 
+// -------------------------------------------------------- issue breakdown tooltip
+// Small "Active Issue Breakdown" table shown on hover/focus of a room's alert
+// badge (or the Rooftop Snapshot tile, for the roof "section") — In House
+// Repairs vs. Vendor Outsourced Repairs, per computeRoomIssueBreakdown /
+// computeRoofIssueBreakdown above. #room-issue-tooltip is `position: fixed`
+// and positioned directly from getBoundingClientRect() (viewport-relative,
+// no wrap-offset math needed — unlike the Overview chart's tooltip, nothing
+// here sits inside a scrolling/clipping container), so it can float over the
+// map without being clipped by anything.
+const ROOM_ISSUE_TOOLTIP_GAP = 8;
+let roomIssueTooltipHideTimer = null;
+
+function showRoomIssueTooltip(targetEl, sectionLabel, breakdown) {
+  const tip = document.getElementById("room-issue-tooltip");
+  if (!tip) return;
+  clearTimeout(roomIssueTooltipHideTimer);
+
+  tip.innerHTML = "";
+  const titleEl = document.createElement("div");
+  titleEl.className = "room-issue-tooltip-title";
+  titleEl.textContent = sectionLabel + " — Active Issue Breakdown";
+  tip.appendChild(titleEl);
+
+  const table = document.createElement("table");
+  table.className = "room-issue-table";
+  [
+    { label: "In House Repairs", count: breakdown.inHouse },
+    { label: "Vendor Outsourced Repairs", count: breakdown.vendor }
+  ].forEach(function (row) {
+    const tr = document.createElement("tr");
+    const tdLabel = document.createElement("td");
+    tdLabel.className = "room-issue-label";
+    tdLabel.textContent = row.label;
+    const tdCount = document.createElement("td");
+    tdCount.className = "room-issue-count";
+    tdCount.textContent = String(row.count);
+    tr.appendChild(tdLabel);
+    tr.appendChild(tdCount);
+    table.appendChild(tr);
+  });
+  tip.appendChild(table);
+
+  // Must be visible BEFORE measuring, or its rendered size reads as 0.
+  tip.hidden = false;
+
+  const targetRect = targetEl.getBoundingClientRect();
+  const tipRect = tip.getBoundingClientRect();
+  const gap = ROOM_ISSUE_TOOLTIP_GAP;
+  const margin = 4;
+
+  const spaceAbove = targetRect.top;
+  const spaceBelow = window.innerHeight - targetRect.bottom;
+  const needed = tipRect.height + gap;
+  let top;
+  if (spaceAbove >= needed) {
+    top = targetRect.top - gap - tipRect.height;
+  } else if (spaceBelow >= needed) {
+    top = targetRect.bottom + gap;
+  } else {
+    top = spaceBelow > spaceAbove ? targetRect.bottom + gap : targetRect.top - gap - tipRect.height;
+  }
+  top = Math.min(Math.max(top, margin), window.innerHeight - tipRect.height - margin);
+
+  let left = targetRect.left + targetRect.width / 2 - tipRect.width / 2;
+  left = Math.min(Math.max(left, margin), window.innerWidth - tipRect.width - margin);
+
+  tip.style.top = top + "px";
+  tip.style.left = left + "px";
+}
+
+function hideRoomIssueTooltip() {
+  const tip = document.getElementById("room-issue-tooltip");
+  if (!tip) return;
+  roomIssueTooltipHideTimer = setTimeout(function () { tip.hidden = true; }, 40);
+}
+
 function buildCompass() {
   const g = svgEl("g", { "class": "compass", transform: "translate(1150,30)" });
   g.appendChild(svgEl("line", { x1: 14, y1: 34, x2: 14, y2: 4, stroke: "#9d9b93", "stroke-width": 2 }));
@@ -1033,6 +1138,10 @@ function buildRooftopSnapshot() {
       switchTab("roof");
     }
   });
+  g.addEventListener("mouseenter", function () { showRoomIssueTooltip(g, "Roof Level", computeRoofIssueBreakdown()); });
+  g.addEventListener("mouseleave", hideRoomIssueTooltip);
+  g.addEventListener("focus", function () { showRoomIssueTooltip(g, "Roof Level", computeRoofIssueBreakdown()); });
+  g.addEventListener("blur", hideRoomIssueTooltip);
 
   return g;
 }
@@ -1074,6 +1183,7 @@ function renderFloorSVG() {
 
       const badge = svgEl("g", {
         "class": "room-alert-badge",
+        tabindex: "0", role: "img", "aria-label": room.label + " — active issue, hover for breakdown",
         transform: "translate(" + (room.x + room.w - 20) + "," + (room.y + 6) + ")"
       });
       badge.innerHTML = ICON_SHAPES.active_issue;
@@ -1081,6 +1191,10 @@ function renderFloorSVG() {
       const badgeTitle = svgEl("title");
       badgeTitle.textContent = "Active issue";
       badge.appendChild(badgeTitle);
+      badge.addEventListener("mouseenter", function () { showRoomIssueTooltip(badge, room.label, computeRoomIssueBreakdown(room.id)); });
+      badge.addEventListener("mouseleave", hideRoomIssueTooltip);
+      badge.addEventListener("focus", function () { showRoomIssueTooltip(badge, room.label, computeRoomIssueBreakdown(room.id)); });
+      badge.addEventListener("blur", hideRoomIssueTooltip);
       roomsG.appendChild(badge);
     }
   });
@@ -1251,6 +1365,21 @@ function buildUpdateForm(opts) {
   textarea.placeholder = "What's happening with this issue? (required)";
   wrap.appendChild(textarea);
 
+  // Clearly-labeled, stand-alone checkbox — never bundled into the status
+  // segmented or the message, so it reads as its own explicit declaration.
+  // Defaults to the finding's own most-recently-recorded value when
+  // continuing an existing one (see the call site's defaultIsVendor), so
+  // reopening the form doesn't silently reset a vendor issue back to
+  // "in-house" — a brand-new finding defaults unchecked.
+  const vendorLabel = document.createElement("label");
+  vendorLabel.className = "update-vendor-check";
+  const vendorCheckbox = document.createElement("input");
+  vendorCheckbox.type = "checkbox";
+  vendorCheckbox.checked = !!opts.defaultIsVendor;
+  vendorLabel.appendChild(vendorCheckbox);
+  vendorLabel.appendChild(document.createTextNode("Outsourced to a vendor"));
+  wrap.appendChild(vendorLabel);
+
   const err = document.createElement("div");
   err.className = "save-error-note";
   err.hidden = true;
@@ -1273,6 +1402,7 @@ function buildUpdateForm(opts) {
   // call site that forgets the check.
   if (!canEdit()) {
     textarea.disabled = true;
+    vendorCheckbox.disabled = true;
     saveBtn.disabled = true;
     buttons.forEach(function (x) { x.el.disabled = true; });
   }
@@ -1288,7 +1418,7 @@ function buildUpdateForm(opts) {
     err.hidden = true;
     saveBtn.disabled = true;
     cancelBtn.disabled = true;
-    Promise.resolve(opts.onSave(chosen, msg)).catch(function (e) {
+    Promise.resolve(opts.onSave(chosen, msg, vendorCheckbox.checked)).catch(function (e) {
       console.error("Failed to save finding update:", e);
       err.textContent = "Couldn't save — check your connection and try again.";
       err.hidden = false;
@@ -1344,10 +1474,10 @@ function renderFindingTimeline(container, findingId) {
 // the pendingRowId comment in buildCheckRow — consistent with the raw
 // status-toggle path, so a note saved right after going to Attention
 // consolidates into this same row instead of inserting a second one.
-function saveFindingUpdate(checkpointId, itemKey, existingFinding, status, message, alsoLogToggle, notes, actor) {
+function saveFindingUpdate(checkpointId, itemKey, existingFinding, status, message, alsoLogToggle, notes, actor, isVendor) {
   const findingPromise = existingFinding
-    ? ChecklistStore.addFindingUpdate(existingFinding.id, status, message, actor)
-    : ChecklistStore.createFinding(checkpointId, itemKey, status, message, actor);
+    ? ChecklistStore.addFindingUpdate(existingFinding.id, status, message, actor, isVendor)
+    : ChecklistStore.createFinding(checkpointId, itemKey, status, message, actor, isVendor);
 
   return findingPromise.then(function (result) {
     applyFindingResult(result.finding, result.update);
@@ -1725,10 +1855,17 @@ function buildCheckRow(checkpoint, checklistItem) {
       const isNew = formMode.kind === "new";
       const targetFinding = isNew ? null : formMode.finding;
       const alsoLogToggle = isNew ? true : !!formMode.alsoLogToggle;
+      // Continuing an existing finding defaults the checkbox to whatever its
+      // latest update last said (UPDATES_BY_FINDING is sorted newest-first —
+      // see rebuildFindingMaps) so reopening the form doesn't silently reset
+      // a vendor issue back to "in-house"; a brand-new finding starts
+      // unchecked.
+      const defaultIsVendor = isNew ? false : !!((UPDATES_BY_FINDING[targetFinding.id] || [])[0] || {}).is_vendor;
       const formEl = buildUpdateForm({
         defaultStatus: "in_progress",
-        onSave: function (status, message) {
-          return saveFindingUpdate(checkpoint.id, itemKey, targetFinding, status, message, alsoLogToggle, notesInput.value, currentActorName())
+        defaultIsVendor: defaultIsVendor,
+        onSave: function (status, message, isVendor) {
+          return saveFindingUpdate(checkpoint.id, itemKey, targetFinding, status, message, alsoLogToggle, notesInput.value, currentActorName(), isVendor)
             .then(function (res) {
               formMode = null;
               expanded = true;

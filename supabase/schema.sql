@@ -51,6 +51,7 @@ create table if not exists public.finding_updates (
   status text not null,        -- 'in_progress' | 'monitoring' | 'resolved' — status as of THIS update
   message text not null,
   actor text,                    -- display name of the user who logged this update; null for pre-attribution rows
+  is_vendor boolean not null default false, -- true if THIS update says the issue is being handled by an outsourced vendor rather than in-house
   created_at timestamptz not null default now()
 );
 
@@ -206,3 +207,12 @@ grant execute on function public.remove_user_password(text, text) to anon;
 alter table public.checklist_log add column if not exists actor text;
 alter table public.finding_updates add column if not exists actor text;
 alter table public.findings add column if not exists opened_by text;
+
+-- v5: in-house vs. vendor-outsourced tracking — a checkbox on the "Log an
+-- update" form flags whether THIS update means the issue is being handled by
+-- an outsourced vendor. A finding's CURRENT vendor/in-house classification
+-- (used by the map's per-section "Active Issue Breakdown" counts) is always
+-- read client-side from its most recent update's is_vendor value — there's
+-- no separate "current classification" column to keep in sync, same as every
+-- other "current state" in this app.
+alter table public.finding_updates add column if not exists is_vendor boolean not null default false;

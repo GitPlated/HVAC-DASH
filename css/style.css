@@ -1466,6 +1466,27 @@ button.finding-indicator {
   min-height: 60px;
 }
 
+/* Deliberately its own row, not folded into the status segmented or the
+   message — a plain checkbox + explicit label reads as its own clear
+   declaration rather than a buried option. */
+.update-vendor-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-primary);
+  cursor: pointer;
+}
+
+.update-vendor-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--identity-accent, var(--ink-primary));
+  cursor: pointer;
+  flex: none;
+}
+
 .update-form-actions {
   display: flex;
   gap: 8px;
@@ -1831,6 +1852,66 @@ button.finding-indicator {
   font-size: 0.7rem;
   color: var(--ink-muted);
   margin-top: 2px;
+}
+
+/* Active Issue Breakdown tooltip — see showRoomIssueTooltip in js/app.js.
+   position:fixed (not absolute-in-a-wrap like .overview-chart-tooltip above)
+   since it isn't confined to any single scrolling container; JS sets its
+   exact top/left from getBoundingClientRect(), viewport-relative to match. A
+   capped width forces even the longest row label ("Vendor Outsourced
+   Repairs") to wrap onto two lines rather than stretching the tooltip wide
+   or overflowing its cell. */
+.room-issue-tooltip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  width: 200px;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  box-shadow: 0 6px 18px var(--shadow);
+}
+
+.room-issue-tooltip[hidden] {
+  display: none;
+}
+
+.room-issue-tooltip-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.room-issue-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.room-issue-table td {
+  padding: 3px 0;
+  font-size: 0.78rem;
+  vertical-align: top;
+}
+
+.room-issue-label {
+  color: var(--ink-secondary);
+  white-space: normal;
+  overflow-wrap: break-word;
+  padding-right: 8px !important;
+}
+
+.room-issue-count {
+  font-weight: 700;
+  color: var(--ink-primary);
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
 }
 
 .overview-side {
