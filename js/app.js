@@ -860,12 +860,23 @@ function findingMentionsVendor(finding) {
   });
 }
 
+// Tallies by CHECKPOINT, not by finding — matching computeAggregateStatus /
+// the Rooftop Snapshot's own red-cell count exactly, one tally per red cell.
+// A single piece of equipment (e.g. RTU) can carry several simultaneous
+// unresolved findings at once (a Fans issue AND a Visual Inspection issue),
+// but it's still only ONE red cell on the grid — counting every finding
+// separately made the IH+V total exceed the number of active alarms shown.
+// A checkpoint with at least one vendor-related finding counts as vendor
+// overall (mirrors how ANY unresolved finding is enough to mark it
+// active_issue in the first place — one bad apple, so to speak).
 function computeIssueBreakdownForCheckpoints(checkpointIds) {
   let inHouse = 0, vendor = 0;
-  FINDINGS_LIST.forEach(function (f) {
-    if (f.status === "resolved") return;
-    if (checkpointIds.indexOf(f.checkpoint_id) === -1) return;
-    if (findingMentionsVendor(f)) vendor++;
+  checkpointIds.forEach(function (cpId) {
+    const findings = FINDINGS_LIST.filter(function (f) {
+      return f.checkpoint_id === cpId && f.status !== "resolved";
+    });
+    if (!findings.length) return;
+    if (findings.some(findingMentionsVendor)) vendor++;
     else inHouse++;
   });
   return { inHouse: inHouse, vendor: vendor };
