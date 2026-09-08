@@ -1,0 +1,1872 @@
+/* ---------------------------------------------------------------------
+   Theme tokens. Dark is the primary/default look; the light variant
+   below only swaps surface/ink/gridline/border tokens. Status colors
+   and room-category colors are fixed and intentionally NOT themed —
+   they must read identically in light and dark so a technician never
+   has to re-learn the palette.
+--------------------------------------------------------------------- */
+:root {
+  --bg-page: #0d0d0d;
+  --bg-panel: #1a1a19;
+  --bg-panel-raised: #212120;
+  --grid-line: #2c2c2a;
+  --border: rgba(255, 255, 255, 0.10);
+  --ink-primary: #f0efe9;
+  --ink-secondary: #b7b5ac;
+  --ink-muted: #85837b;
+  --shadow: rgba(0, 0, 0, 0.55);
+
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+  --status-notchecked: #6b6a66;
+  --status-resolved: #2e8f8f;
+
+  --cat-raw-fill: #1b3a5c;
+  --cat-raw-stroke: #3d6690;
+  --cat-raw-text: #eef2f6;
+
+  --cat-cooked-fill: #f2f0e7;
+  --cat-cooked-stroke: rgba(20, 20, 15, 0.35);
+  --cat-cooked-text: #23231f;
+
+  --cat-admin-fill: #8a8d93;
+  --cat-admin-stroke: rgba(255, 255, 255, 0.25);
+  --cat-admin-text: #1a1a1a;
+
+  --cat-mech-fill: #46525c;
+  --cat-mech-stroke: #6f7a84;
+  --cat-mech-text: #eef2f6;
+
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-page: #fcfcfb;
+    --bg-panel: #ffffff;
+    --bg-panel-raised: #f5f4f0;
+    --grid-line: #e1e0d9;
+    --border: rgba(11, 11, 11, 0.10);
+    --ink-primary: #0b0b0b;
+    --ink-secondary: #52514e;
+    --ink-muted: #898781;
+    --shadow: rgba(20, 20, 15, 0.15);
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Identity theme. Purely a "who am I" attribution feature (no real auth —
+   see js/app.js identity section) — layered onto UI CHROME (header border,
+   active-tab underline, generic button borders) via --identity-accent, PLUS
+   a clearly-visible page-wide translucent color wash via --identity-wash
+   (applied to body's background, which covers the whole viewport — see
+   body rule below). Deliberately named "identity-theme-*" (not
+   "admin-theme" etc.) to avoid any confusion with the unrelated existing
+   "admin" ROOM category (office/admin floor area) or the
+   good/critical/not-checked/resolved STATUS colors — neither of those is
+   touched by this feature. Every consumer below reads
+   var(--identity-accent, <original value>) / var(--identity-wash, <original
+   value>) so with no theme class applied (page load, or Admin selected) the
+   page renders pixel-identical to before this feature existed.
+   --identity-wash opacity is deliberately different for dark vs light mode
+   (dark backgrounds need a stronger tint to read as an obvious color shift;
+   near-white light backgrounds show even a faint tint clearly) and is kept
+   low enough that it never meaningfully moves the contrast of ink/status/
+   room colors sitting on top of it.
+--------------------------------------------------------------------- */
+/* Opacity values below were picked by actually computing WCAG contrast
+   ratios of the app's dimmest text token (--ink-muted, e.g. .hint-text)
+   against the resulting blended background in both schemes, for each
+   identity's hue, and choosing the highest opacity that still keeps a
+   comfortable margin above the 4.5:1 / ~3.5:1 (dark/light — light mode's
+   ink-muted-on-bg-page was already only ~3.5:1 pre-existing, unrelated to
+   this feature) baseline the app already reads at today, while still being
+   an obvious, clearly-perceptible tint at a glance. Dark backgrounds read
+   an obvious color cast even at modest alpha, so 0.10 is enough there;
+   light mode needs to stay lower (0.06–0.07) since near-white bg-page +
+   fully-saturated accent hues erode --ink-muted's margin faster per unit
+   of alpha than dark-mode's already-dark background does — hence the
+   slightly lower value across all identities in light mode.
+   (Aurora's own copy of this file carries a longer methodology note here —
+   a formal RGB-distance/hue-angle/WCAG-contrast pass across its 8 real
+   identities, prompted by a real reported color-confusion incident. See
+   the comment directly above Goodyear's own 8 identity-theme-* rules below
+   for why that same rigor wasn't repeated here yet.) */
+/* Goodyear's own 8 real identities (RTs: Israel, Damarys; Lead Techs:
+   Ferrell, Cliff, Hasanain, Jess, Anthony, Richard), added 2026-09-08.
+   Picked for reasonable, at-a-glance visual separation (spread around the
+   wheel, away from --status-good/--status-critical) -- NOT run through the
+   same formal RGB-distance/hue-angle/WCAG-contrast pass Aurora's 8 above
+   were (see that comment block for the method, prompted by a real reported
+   color-confusion incident there). If two of these ever get confused for
+   each other in practice, that's the trigger to redo this properly the
+   same way, not a defect assumed away in advance. */
+.identity-theme-israel   { --identity-accent: #3987e5; --identity-wash: rgba(57, 135, 229, 0.10); }
+.identity-theme-damarys  { --identity-accent: #d6336c; --identity-wash: rgba(214, 51, 108, 0.10); }
+.identity-theme-ferrell  { --identity-accent: #0ca3a3; --identity-wash: rgba(12, 163, 163, 0.10); }
+.identity-theme-cliff    { --identity-accent: #d4a017; --identity-wash: rgba(212, 160, 23, 0.10); }
+.identity-theme-hasanain { --identity-accent: #9c5fd6; --identity-wash: rgba(156, 95, 214, 0.10); }
+.identity-theme-jess     { --identity-accent: #e8590c; --identity-wash: rgba(232, 89, 12, 0.10); }
+.identity-theme-anthony  { --identity-accent: #5c6bc0; --identity-wash: rgba(92, 107, 192, 0.10); }
+.identity-theme-richard  { --identity-accent: #e64ab8; --identity-wash: rgba(230, 74, 184, 0.10); }
+
+@media (prefers-color-scheme: light) {
+  .identity-theme-israel   { --identity-accent: #2a78d6; --identity-wash: rgba(42, 120, 214, 0.07); }
+  .identity-theme-damarys  { --identity-accent: #ab1f52; --identity-wash: rgba(171, 31, 82, 0.06); }
+  .identity-theme-ferrell  { --identity-accent: #077a7a; --identity-wash: rgba(7, 122, 122, 0.07); }
+  .identity-theme-cliff    { --identity-accent: #937711; --identity-wash: rgba(147, 119, 17, 0.07); }
+  .identity-theme-hasanain { --identity-accent: #6b3ba3; --identity-wash: rgba(107, 59, 163, 0.07); }
+  .identity-theme-jess     { --identity-accent: #b8420a; --identity-wash: rgba(184, 66, 10, 0.07); }
+  .identity-theme-anthony  { --identity-accent: #3b4a94; --identity-wash: rgba(59, 74, 148, 0.07); }
+  .identity-theme-richard  { --identity-accent: #b32e8f; --identity-wash: rgba(179, 46, 143, 0.07); }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-page);
+  color: var(--ink-primary);
+  font-family: var(--font-ui);
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  /* The identity class lives on <body> itself (see applyIdentityTheme in
+     js/app.js), so this picks up --identity-wash the instant it's set and
+     falls back to the plain page background otherwise (Admin / no identity
+     picked yet — unchanged). */
+  background: var(--identity-wash, var(--bg-page));
+}
+
+button, input, select {
+  font-family: inherit;
+}
+
+/* ------------------------------------------------------------ header */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 20px;
+  background: var(--bg-panel);
+  border-bottom: 2px solid var(--identity-accent, var(--border));
+}
+
+.app-header-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.app-header-title h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.app-header-sub {
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.view-tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-tab {
+  background: transparent;
+  border: none;
+  color: var(--ink-secondary);
+  padding: 8px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.view-tab + .view-tab {
+  border-left: 1px solid var(--border);
+}
+
+.view-tab.is-active {
+  background: var(--bg-panel-raised);
+  color: var(--ink-primary);
+  box-shadow: inset 0 -3px 0 0 var(--identity-accent, transparent);
+}
+
+.btn {
+  border: 1px solid var(--identity-accent, var(--border));
+  background: var(--bg-panel-raised);
+  color: var(--ink-primary);
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--identity-accent, var(--ink-muted));
+}
+
+.btn-icon {
+  background: transparent;
+  border: none;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+}
+
+.btn-icon:hover {
+  color: var(--ink-primary);
+  background: var(--bg-panel-raised);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+select:disabled, input:disabled, textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------ load banner */
+.load-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  background: rgba(208, 59, 59, 0.12);
+  border-bottom: 1px solid rgba(208, 59, 59, 0.4);
+  color: var(--status-critical);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.load-error-banner[hidden] {
+  display: none;
+}
+
+.load-error-dismiss {
+  color: var(--status-critical);
+  flex: none;
+}
+
+/* ------------------------------------------------------------ identity gate */
+.identity-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--bg-page);
+  display: flex;
+  align-items: safe center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Plain "center" ignores overflow and can shift content off-screen at the
+   top with no way to scroll back up to it (the mobile bug this fixes) -
+   "safe center" falls back to start-alignment once content is taller than
+   the viewport, so everything stays reachable by scrolling. Repeated on
+   .identity-gate-inner itself for the handful of browsers that support
+   overflow scrolling on the flex container but not "safe" on align-items. */
+.identity-gate-inner {
+  margin: auto 0;
+}
+
+.identity-gate[hidden] {
+  display: none;
+}
+
+.identity-gate-inner {
+  /* Widened from an earlier 760px so 8 named identities + Admin (9 cards
+     total) settle into a clean 3-column grid on desktop instead of an
+     uneven 4-then-1 wrap — see .identity-gate-grid below. */
+  max-width: 860px;
+  width: 100%;
+  text-align: center;
+}
+
+.identity-gate-title {
+  margin: 0 0 8px;
+  font-size: 1.4rem;
+  letter-spacing: 0.01em;
+}
+
+.identity-gate-sub {
+  margin: 0 0 28px;
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}
+
+.identity-gate-grid {
+  display: grid;
+  /* Mobile-first: wrap to as many 150px+ columns as fit (1 column on a
+     phone-width viewport, stacking all 9 cards vertically — scrollable,
+     never clipped or overlapping). */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+}
+
+/* At 640px and up (a narrower, gate-specific breakpoint — NOT the same
+   768px breakpoint .slide-over uses above, that one's for the slide-over
+   panel going full-width on mobile), force an even 3x3 grid for the current
+   8-named + Admin count instead of letting auto-fit greedily pack a 4th
+   column and strand a lone full-width card on its own last row. */
+@media (min-width: 640px) {
+  .identity-gate-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Below 640px, 9 cards (already 2-per-row from the auto-fit grid above)
+   still add up to 5 rows — tighten the whole gate's vertical rhythm so
+   less scrolling is needed to reach the bottom (Admin), on top of the
+   overflow-y fix above that guarantees it's reachable either way. */
+@media (max-width: 639px) {
+  .identity-gate {
+    padding: 16px;
+  }
+  .identity-gate-title {
+    font-size: 1.15rem;
+    margin: 0 0 6px;
+  }
+  .identity-gate-sub {
+    font-size: 0.8rem;
+    margin: 0 0 18px;
+  }
+  .identity-gate-grid {
+    gap: 10px;
+  }
+  .identity-card {
+    padding: 16px 10px;
+    gap: 6px;
+  }
+  .identity-card-swatch {
+    width: 26px;
+    height: 26px;
+  }
+  .identity-card-name {
+    font-size: 0.88rem;
+  }
+}
+
+.identity-card {
+  background: var(--bg-panel);
+  border: 2px solid var(--identity-accent, var(--border));
+  border-radius: 12px;
+  padding: 28px 16px;
+  cursor: pointer;
+  color: var(--ink-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.identity-card:hover,
+.identity-card:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px var(--shadow);
+  outline: none;
+}
+
+.identity-card-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--identity-accent, var(--ink-muted));
+}
+
+.identity-card-name {
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+
+.identity-card-admin {
+  color: var(--ink-secondary);
+}
+
+.identity-card-badge {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+/* ------------------------------------------------------------ identity gate: password protection
+   Lock badge injected by updateIdentityLockIndicators() (js/app.js) onto any
+   .identity-card whose display name is in the protected set. Icon + visible
+   text label together (never color/icon alone), matching this app's existing
+   rule (see e.g. .finding-indicator, .assumed-note). */
+.identity-card-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+}
+
+/* Shared password-entry form (any protected card) and the master-password /
+   management module below both reuse .update-form's existing "Log an
+   update" look (see the panel-content section further down) via
+   .gate-inline-form, just centered and width-capped for the gate's
+   centered-column layout. */
+.identity-password-prompt,
+.identity-manage-panel {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.identity-password-prompt[hidden],
+.identity-manage-panel[hidden] {
+  display: none;
+}
+
+/* #manage-master-prompt reuses .update-form's `display: flex` (an author
+   rule), which otherwise beats the UA default `[hidden] { display: none }`
+   the moment the master password is accepted and this element's hidden
+   property flips to true — leaving the master-password form visibly
+   stacked on top of the now-revealed user list. Same fix as
+   .manage-users-panel[hidden] below, just for this sibling. */
+#manage-master-prompt[hidden] {
+  display: none;
+}
+
+.gate-inline-form {
+  max-width: 360px;
+  width: 100%;
+  text-align: left;
+}
+
+.gate-onboarding-wrap {
+  margin-top: 28px;
+  text-align: center;
+}
+
+/* Deliberately a solid, high-contrast pill (not the faint outline .btn gets
+   elsewhere) — this is a stand-alone invitation, not a form action sitting
+   next to other controls, so it needs to read as a real call-to-action
+   against the plain gate background. Built from the app's own ink/page
+   tokens (inverted) rather than a new accent hue, so it still respects the
+   "color means identity or status" rule and auto-adapts to dark/light. */
+.gate-onboarding-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  background: var(--ink-primary);
+  color: var(--bg-page);
+  border-color: var(--ink-primary);
+}
+
+.gate-onboarding-btn:hover {
+  opacity: 0.85;
+  border-color: var(--ink-primary);
+}
+
+.gate-manage-wrap {
+  margin-top: 14px;
+  text-align: center;
+}
+
+/* Deliberately subordinate to the 9 identity cards above — a plain
+   underlined text link, not a bordered .btn — this is an admin utility, not
+   a primary gate action. */
+.gate-manage-link {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.gate-manage-link:hover {
+  color: var(--ink-secondary);
+}
+
+.manage-users-panel {
+  max-width: 560px;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.manage-users-panel[hidden] {
+  display: none;
+}
+
+.manage-users-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.manage-user-row {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-panel);
+}
+
+.manage-user-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.manage-user-row-name {
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.manage-user-row-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+}
+
+.manage-user-row-status.is-protected {
+  color: var(--status-warning);
+}
+
+.manage-user-row-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.manage-user-row-controls .notes-input {
+  flex: 1 1 140px;
+  min-width: 140px;
+}
+
+/* ------------------------------------------------------------ acting-as indicator */
+.acting-as {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+  padding: 6px 10px;
+  border: 1px solid var(--identity-accent, var(--border));
+  border-radius: 999px;
+  background: var(--bg-panel-raised);
+}
+
+.acting-as-label {
+  color: var(--ink-muted);
+}
+
+.acting-as-name {
+  font-weight: 700;
+  color: var(--identity-accent, var(--ink-primary));
+}
+
+/* Second, complementary reinforcement of "who's active" alongside the
+   page-wide wash: a solid identity-accent dot next to the name. Kept free
+   of text-on-accent (so there's no accent-background/white-text contrast
+   question to solve per identity/scheme), reusing the same solid-swatch
+   pattern already used on the identity gate cards. Scoped to only render
+   when an identity theme class is actually on <body> (not just a fallback
+   color check), so Admin / no-selection-yet keeps today's plain layout with
+   zero extra space or markup. */
+body[class*="identity-theme-"] .acting-as-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body[class*="identity-theme-"] .acting-as-name::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--identity-accent);
+  flex: none;
+}
+
+/* Shared "why is this identity different" pill — shows either "View only —
+   Admin" or "Sandbox — changes aren't saved" (see updateActingAsUI in
+   js/app.js); the two are mutually exclusive so one element covers both. */
+.acting-as-note {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.acting-as-note[hidden] {
+  display: none;
+}
+
+.btn-switch {
+  padding: 4px 10px;
+  font-size: 0.72rem;
+}
+
+/* ------------------------------------------------------------ legend */
+.legend-bar {
+  display: flex;
+  gap: 32px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  /* Shares the identity wash with body (see body rule above) so there's no
+     visible seam between the two right under the header. */
+  background: var(--identity-wash, var(--bg-page));
+}
+
+.legend-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.legend-group-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.legend-items {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex: none;
+  display: inline-block;
+}
+
+.legend-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: inline-flex;
+}
+
+/* ------------------------------------------------------------ layout */
+main {
+  flex: 1;
+  padding: 20px;
+}
+
+.view-section {
+  display: none;
+}
+
+.view-section.is-active {
+  display: block;
+}
+
+.hint-text {
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  margin: 0 0 12px;
+}
+
+.map-wrap {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+/* Rooftop Snapshot tile — drawn as real SVG content INSIDE #floor-svg (see
+   buildRooftopSnapshot in js/app.js), not an HTML element overlaid on top of
+   it. It sits in the one region of the 1240x1000 grid that's genuinely empty
+   of any room rect (above North Compressor Room, left of Entrance Area) and
+   scales in lockstep with the map at every viewport width — an HTML overlay
+   positioned in screen pixels would drift into whatever room happens to
+   render underneath it once the map's own responsive scale factor changes. */
+.rooftop-snapshot-group {
+  cursor: pointer;
+}
+
+.rooftop-snapshot-group:focus {
+  outline: none;
+}
+
+.rooftop-snapshot-group:hover .rooftop-snapshot-bg,
+.rooftop-snapshot-group:focus-visible .rooftop-snapshot-bg {
+  stroke: var(--ink-muted);
+}
+
+.rooftop-snapshot-bg {
+  fill: var(--bg-panel-raised);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.rooftop-snapshot-label-svg {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  fill: var(--ink-muted);
+}
+
+.rooftop-snapshot-cell-svg {
+  stroke: rgba(0, 0, 0, 0.3);
+  stroke-width: 1;
+}
+
+#floor-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.room-rect {
+  cursor: default;
+}
+
+.room-label {
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.marker {
+  cursor: pointer;
+}
+
+.marker:focus {
+  outline: none;
+}
+
+.marker:focus circle.marker-ring {
+  stroke: var(--ink-primary);
+}
+
+.compass-label {
+  font-size: 13px;
+  font-weight: 700;
+  fill: var(--ink-secondary);
+}
+
+/* ------------------------------------------------------------ roof grid */
+.roof-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.roof-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.roof-card:hover {
+  border-color: var(--ink-muted);
+}
+
+.roof-card-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.roof-card-meta {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.roof-card-model {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+}
+
+/* ------------------------------------------------------------ status badge */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  width: fit-content;
+}
+
+.status-badge svg {
+  flex: none;
+}
+
+/* ------------------------------------------------------------ backdrop */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 40;
+}
+
+.backdrop.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ------------------------------------------------------------ slide-over */
+.slide-over {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 440px;
+  max-width: 92vw;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 32px var(--shadow);
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+
+.slide-over.is-open {
+  transform: translateX(0);
+}
+
+.slide-over-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.slide-over-titles h2 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.slide-over-subtitle {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+.slide-over-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px 40px;
+}
+
+@media (max-width: 768px) {
+  .slide-over {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+/* ------------------------------------------------------------ panel content */
+.deficiency-banner {
+  background: var(--status-critical);
+  color: #fff;
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.deficiency-banner svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.deficiency-banner .db-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.deficiency-banner .db-notes {
+  font-weight: 400;
+  opacity: 0.92;
+}
+
+.panel-section-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin: 20px 0 8px;
+}
+
+.panel-section-title:first-of-type {
+  margin-top: 0;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.82rem;
+  padding: 3px 0;
+  color: var(--ink-secondary);
+}
+
+.info-row .info-value {
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.check-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--grid-line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.check-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.check-row-name {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.check-row-expected {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+
+.today-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.today-status-label {
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+}
+
+/* The confirm-OK form is full-width and multi-line — always drop it to its
+   own row under the label/buttons rather than squeezing it into the flex
+   row alongside them. */
+.today-status-row > .update-form {
+  flex: 1 1 100%;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex: none;
+}
+
+.segmented button {
+  border: none;
+  background: transparent;
+  color: var(--ink-secondary);
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--border);
+}
+
+/* Generic fallback for ANY segmented control's .is-active button (e.g. the
+   Findings-tab Active/Resolved/All filter, which uses data-filter, and the
+   finding update form's In Progress/Monitoring/Resolved control, which uses
+   no data attribute at all) — both would otherwise inherit only the white
+   text below with no background, since neither matches the data-state
+   selectors that follow. --ink-secondary/--bg-panel are an existing pair
+   that already flips light<->dark per theme (see :root / light-mode
+   overrides above), so pairing them here guarantees real contrast in both
+   color schemes without inventing a new token. The three data-state rules
+   below are more specific (attribute selector) and still win for the
+   Not-checked/OK/Attention control. */
+.segmented button.is-active {
+  background: var(--ink-secondary);
+  color: var(--bg-panel);
+}
+
+.segmented button[data-state="not_checked"].is-active { background: var(--status-notchecked); color: #fff; }
+.segmented button[data-state="ok"].is-active { background: var(--status-good); color: #fff; }
+.segmented button[data-state="attention"].is-active { background: var(--status-warning); color: #1a1200; }
+
+.notes-input, .sub-notes-input, textarea.notes-input {
+  width: 100%;
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 7px 9px;
+  color: var(--ink-primary);
+  font-size: 0.82rem;
+  font-family: var(--font-ui);
+}
+
+.notes-input::placeholder {
+  color: var(--ink-muted);
+}
+
+.notes-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.notes-row .notes-input {
+  flex: 1;
+}
+
+.notes-save-btn {
+  flex: none;
+  padding: 7px 12px;
+  font-size: 0.78rem;
+}
+
+.units-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.unit-row {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--ink-secondary);
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--grid-line);
+}
+
+.sub-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--grid-line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sub-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.sub-row-designation {
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.sub-row-model {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+}
+
+.sub-row-fault {
+  color: var(--status-critical);
+  font-weight: 700;
+  font-size: 0.74rem;
+}
+
+.sub-row-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.oil-select {
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  color: var(--ink-primary);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.save-error-note {
+  font-size: 0.74rem;
+  color: var(--status-critical);
+  font-weight: 600;
+}
+
+.save-error-note[hidden] {
+  display: none;
+}
+
+.assumed-note {
+  font-size: 0.72rem;
+  color: var(--status-warning);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ------------------------------------------------------------ active-issue pulse (map markers) */
+@keyframes marker-pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+.marker-pulse-ring {
+  fill: none;
+  stroke: var(--status-critical);
+  stroke-width: 2.5;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: marker-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+}
+
+.marker-ring-alert {
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-width: 1.5;
+}
+
+/* ------------------------------------------------------------ active-issue highlight (rooms) */
+@keyframes room-alert-glow {
+  0% { stroke-width: 2; stroke-opacity: 0.9; }
+  50% { stroke-width: 6; stroke-opacity: 0.25; }
+  100% { stroke-width: 2; stroke-opacity: 0.9; }
+}
+
+.room-alert-ring {
+  fill: none;
+  stroke: var(--status-critical);
+  animation: room-alert-glow 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.room-alert-badge {
+  color: var(--status-critical);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marker-pulse-ring {
+    animation: none;
+    opacity: 0.9;
+    stroke-width: 3.5;
+  }
+  .room-alert-ring {
+    animation: none;
+    stroke-width: 3;
+    stroke-opacity: 0.9;
+  }
+}
+
+/* ------------------------------------------------------------ roof card active-issue */
+.roof-card {
+  position: relative;
+}
+
+.roof-card-alert {
+  border-color: var(--status-critical);
+}
+
+@keyframes roof-card-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(208, 59, 59, 0.55); }
+  100% { box-shadow: 0 0 0 12px rgba(208, 59, 59, 0); }
+}
+
+.roof-card-alert::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  animation: roof-card-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roof-card-alert::before {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--status-critical);
+  }
+}
+
+/* ------------------------------------------------------------ finding indicator (item rows / cards) */
+.finding-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel-raised);
+  color: var(--ink-primary);
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  width: fit-content;
+}
+
+button.finding-indicator {
+  font-family: inherit;
+}
+
+.finding-indicator-active {
+  color: var(--status-critical);
+  border-color: rgba(208, 59, 59, 0.45);
+}
+
+.finding-indicator-resolved {
+  color: var(--status-resolved);
+  border-color: rgba(46, 143, 143, 0.45);
+}
+
+.finding-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.finding-add-update-btn {
+  font-size: 0.74rem;
+  padding: 6px 10px;
+}
+
+/* ------------------------------------------------------------ finding timeline */
+.finding-timeline-wrap {
+  width: 100%;
+}
+
+.finding-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: 2px solid var(--grid-line);
+  padding-left: 10px;
+  margin-top: 4px;
+}
+
+.finding-timeline-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.finding-timeline-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+}
+
+.finding-timeline-time {
+  font-family: var(--font-mono);
+}
+
+.finding-timeline-actor {
+  font-weight: 700;
+  color: var(--ink-secondary);
+}
+
+.finding-timeline-message {
+  font-size: 0.82rem;
+  color: var(--ink-primary);
+}
+
+.finding-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
+}
+
+.finding-status-badge.finding-status-in_progress {
+  color: var(--status-warning);
+  border-color: rgba(250, 178, 25, 0.5);
+}
+
+.finding-status-badge.finding-status-monitoring {
+  color: #6fa8dc;
+  border-color: rgba(111, 168, 220, 0.5);
+}
+
+.finding-status-badge.finding-status-resolved {
+  color: var(--status-resolved);
+  border-color: rgba(46, 143, 143, 0.5);
+}
+
+/* ------------------------------------------------------------ update form */
+.update-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.update-form-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-secondary);
+}
+
+.update-status-group {
+  align-self: flex-start;
+}
+
+.update-message-input {
+  resize: vertical;
+  min-height: 60px;
+}
+
+/* Deliberately its own row, not folded into the status segmented or the
+   message — a plain checkbox + explicit label reads as its own clear
+   declaration rather than a buried option. */
+.update-vendor-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-primary);
+  cursor: pointer;
+}
+
+.update-vendor-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--identity-accent, var(--ink-primary));
+  cursor: pointer;
+  flex: none;
+}
+
+.update-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ------------------------------------------------------------ daily log page */
+.log-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.log-date-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-secondary);
+}
+
+.log-date-input {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--ink-primary);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+
+/* Scopes the Export-to-Excel button specifically — deliberately grouped in
+   its own bordered box with a small caps label so it reads as distinct from
+   the single-day .log-date-input picker above (which only ever drives the
+   on-screen feed and is completely unaffected by this range). margin-left:
+   auto pulls this group — and the Export button that immediately follows it
+   in markup, via the shared .log-controls gap — to the right side of the
+   controls row, away from the on-screen Date picker on the left. */
+.export-range-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel-raised);
+}
+
+.export-range-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.daily-log-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.log-row {
+  display: flex;
+  gap: 14px;
+  padding: 10px 10px 10px 11px;
+  border-bottom: 1px solid var(--grid-line);
+  border-left: 3px solid transparent;
+}
+
+/* Issue-flagged rows (an "Attention" reading, or any finding_update — even a
+   resolved one, since it's still part of an issue's history) get a colored
+   left accent + tinted background so they pop out of the scrolling feed at a
+   glance. Always paired with the row's own status icon — never color-only. */
+.log-row-issue-active {
+  border-left-color: var(--status-critical);
+  background: rgba(208, 59, 59, 0.08);
+}
+
+.log-row-issue-resolved {
+  border-left-color: var(--status-resolved);
+  background: rgba(46, 143, 143, 0.08);
+}
+
+.log-row-issue-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  vertical-align: middle;
+  position: relative;
+  top: 2px;
+}
+
+.log-row-time {
+  flex: none;
+  width: 92px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  padding-top: 1px;
+}
+
+.log-row-actor {
+  font-family: var(--font-ui);
+  font-size: 0.68rem;
+  color: var(--ink-muted);
+  white-space: normal;
+  margin-top: 2px;
+}
+
+.log-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.log-row-equipment {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.log-row-item {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.log-row-value {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.log-row-notes {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  font-style: italic;
+}
+
+/* ------------------------------------------------------------ findings page */
+.findings-controls {
+  margin-bottom: 14px;
+}
+
+.findings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 720px;
+}
+
+.finding-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.finding-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.finding-card-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.finding-card-meta {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+/* ------------------------------------------------------------ overview page */
+.overview-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.overview-range-note {
+  font-size: 0.76rem;
+  color: var(--status-warning);
+}
+
+/* Drill-down list — the slide-over panel's content when it's showing the
+   items behind one Overview bar segment rather than an equipment checklist
+   (see openOverviewDrilldown/buildOverviewDrilldownBody in js/app.js). Each
+   row is a real <button> (not just a styled div) so it's keyboard-operable
+   like every other clickable list in this app. */
+.drilldown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drilldown-row {
+  width: 100%;
+  text-align: left;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drilldown-row:hover,
+.drilldown-row:focus-visible {
+  border-color: var(--ink-muted);
+  background: var(--bg-panel-raised);
+}
+
+.drilldown-row-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.drilldown-row-item {
+  font-size: 0.76rem;
+  color: var(--ink-muted);
+}
+
+.overview-wrap {
+  display: flex;
+  gap: 32px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.overview-chart-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  flex: 1 1 560px;
+  min-width: 320px;
+  max-width: 780px;
+}
+
+.overview-chart-wrap {
+  position: relative;
+  overflow-x: auto;
+}
+
+#overview-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 460px;
+}
+
+.chart-gridline {
+  stroke: var(--grid-line);
+  stroke-width: 1;
+}
+
+.chart-axis-label {
+  font-size: 11px;
+  fill: var(--ink-muted);
+  font-family: var(--font-ui);
+}
+
+.chart-day-label {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--ink-secondary);
+  font-family: var(--font-ui);
+}
+
+.chart-segment {
+  cursor: default;
+}
+
+.chart-segment:focus {
+  outline: none;
+}
+
+.chart-segment:focus-visible {
+  stroke: var(--ink-primary);
+  stroke-width: 2px;
+}
+
+/* Only today's bar is drillable (see renderOverviewChart) — a distinct
+   cursor + hover fade is the affordance that a segment is clickable, since
+   every other bar keeps the default (non-interactive) cursor. */
+.chart-segment-drillable {
+  cursor: pointer;
+}
+
+.chart-segment-drillable:hover {
+  opacity: 0.82;
+}
+
+/* Visible count painted directly on a segment (see renderOverviewChart in
+   js/app.js) — only added when the segment renders tall enough for a small
+   numeral to sit comfortably inside it; otherwise the count stays available
+   via the tooltip/title only. pointer-events:none so hovering the numeral
+   itself still resolves to (and triggers the tooltip on) the segment rect
+   underneath it rather than the text node. */
+.chart-segment-label {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-ui);
+  pointer-events: none;
+}
+
+/* Positioned via an exact top-left pixel computed in JS (showOverviewTooltip,
+   js/app.js) — top/left there already resolve the segment-edge anchor point,
+   the above/below flip, the OVERVIEW_TOOLTIP_GAP offset, AND clamping the
+   result to stay fully inside #overview-chart-wrap's own box, so no CSS
+   anchor transform/margin is layered on top of that (translate(-50%, 0) only
+   centers horizontally — the axis the tooltip is still literally centered
+   on the hovered segment for). */
+.overview-chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  transform: translate(-50%, 0);
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  box-shadow: 0 6px 18px var(--shadow);
+  white-space: nowrap;
+  z-index: 5;
+}
+
+/* .overview-chart-tooltip-below is still toggled in JS (see
+   showOverviewTooltip) to mark which side the tooltip landed on, in case a
+   future visual hook (e.g. a directional caret) wants it — but it carries no
+   positioning of its own today, since JS computes the final top pixel for
+   both sides through the same clamp. */
+
+.overview-chart-tooltip[hidden] {
+  display: none;
+}
+
+.overview-chart-tooltip .tooltip-value {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--ink-primary);
+  line-height: 1.2;
+}
+
+.overview-chart-tooltip .tooltip-cat {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+
+.overview-chart-tooltip .tooltip-day {
+  font-size: 0.7rem;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+
+/* Active Issue Breakdown badge — see buildIssueBreakdownBadge in js/app.js.
+   Always visible (drawn straight into the room's/roof tile's own SVG cell,
+   not a hover tooltip) so the In House vs. Vendor Outsourced counts read at
+   a glance. Deliberately a fixed dark fill + light text regardless of the
+   room's own category color (navy/cream/slate/grey all vary), so it stays
+   legible sitting on top of any of them. */
+.room-issue-badge-bg {
+  fill: rgba(0, 0, 0, 0.62);
+}
+
+.room-issue-badge-text {
+  font-size: 8.5px;
+  font-weight: 700;
+  fill: #ffffff;
+  font-family: var(--font-ui);
+}
+
+.overview-side {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 240px;
+  padding-top: 4px;
+}
+
+.overview-counts {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.overview-side .legend-items {
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ------------------------------------------------------------ empty state */
+.empty-state {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  padding: 24px 4px;
+}

@@ -1,0 +1,353 @@
+/*
+ * supabase-client.js — thin persistence layer over the three append-only /
+ * tracked-issue tables described in supabase/schema.sql:
+ *   public.checklist_log    — append-only, one row per status/reading change.
+ *   public.findings         — one row per tracked issue.
+ *   public.finding_updates  — append-only, immutable updates within a finding.
+ *
+ * Exposed as a small async API on window.ChecklistStore. Loaded after the
+ * supabase-js CDN script and before app.js, which is the only consumer of
+ * this file.
+ *
+ * NOTE ON THE KEY BELOW: this is the Supabase "anon" / publishable key, which
+ * is DESIGNED to be shipped in client-side code — it is not a secret. Access
+ * control for these tables is enforced entirely by Postgres Row Level
+ * Security policies (see supabase/schema.sql), which the tool owner has
+ * deliberately left fully open to the anon role for select/insert/update/
+ * delete, since this is a no-login internal tool. Do not treat this key as a
+ * leak, and never put a "service_role" key in this file (or anywhere
+ * client-side) — that key bypasses RLS entirely.
+ *
+ * Error handling contract: every function below returns a Promise that
+ * REJECTS (throws, if awaited) on any failure — network error, missing
+ * table (e.g. the new schema hasn't been applied to the project yet), RLS
+ * misconfiguration, or supabase-js itself failing to load. There is no
+ * "error object" return shape; callers should use try/catch or .catch().
+ * Nothing here throws synchronously.
+ */
+
+(function () {
+  "use strict";
+
+  // TODO before this deployment can save anything: create a NEW Supabase
+  // project for Goodyear (deliberately NOT sharing Aurora's project above —
+  // there's no site column anywhere in schema.sql, so every row in a shared
+  // project would be ambiguous between the two facilities), run
+  // supabase/schema.sql against it, and paste its own Project URL + anon/
+  // publishable key here. Until then this points at nothing real, and every
+  // ChecklistStore call below will reject — the app still loads and renders
+  // the floor plan/checklists from data.js/rooms.js, it just can't persist.
+  const SUPABASE_URL = "";
+  const SUPABASE_ANON_KEY = "";
+
+  const TABLE_LOG = "checklist_log";
+  const TABLE_FINDINGS = "findings";
+  const TABLE_FINDING_UPDATES = "finding_updates";
+
+  let client = null;
+  let initError = null;
+
+  try {
+    if (!window.supabase || typeof window.supabase.createClient !== "function") {
+      throw new Error(
+        "supabase-js failed to load (window.supabase is missing) — check the CDN <script> tag in index.html and network connectivity."
+      );
+    }
+    client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } catch (e) {
+    initError = e;
+  }
+
+  // If client setup failed, every store method rejects with the same error
+  // instead of throwing synchronously (e.g. "Cannot read properties of
+  // undefined") — keeps every call site's try/catch or .catch() working.
+  function initFailure() {
+    return initError ? Promise.reject(initError) : null;
+  }
+
+  // ------------------------------------------------------- actor attribution
+  // The `actor` (checklist_log / finding_updates), `opened_by` (findings), and
+  // `is_vendor` (finding_updates) columns were each added after this table
+  // already existed (see supabase/schema.sql) and may not have been migrated
+  // onto the live project yet at the moment a client loads this file.
+  // PostgREST HARD-ERRORS an insert that references a column the table
+  // doesn't have (it does not silently drop unknown keys), so every write
+  // below that includes one of these columns retries once, with that column
+  // stripped, if-and-only-if the failure looks like exactly that "unknown
+  // column" case FOR THIS SPECIFIC COLUMN. This keeps every write succeeding
+  // (with that one piece of data simply absent) whether or not the migration
+  // has landed yet, instead of every checklist save starting to fail the
+  // moment a feature like this ships.
+  //
+  // columnName must actually appear in the error text — a bare 42703/PGRST204
+  // code is NOT enough on its own to identify WHICH column is missing.
+  // createFinding/addFindingUpdate below check two DIFFERENT optional columns
+  // in sequence against the same failed insert's error; a code-only match
+  // would say "yes" to both checks for a single-column failure, incorrectly
+  // stripping a column that was never actually the problem (verified: this
+  // silently dropped `actor` on every finding_updates write while only
+  // `is_vendor` was actually missing, before this comment/fix).
+  function isMissingColumnError(error, columnName) {
+    if (!error) return false;
+    const haystack = [error.message, error.details, error.hint].filter(Boolean).join(" ").toLowerCase();
+    if (haystack.indexOf(columnName.toLowerCase()) === -1) return false;
+    return error.code === "42703" || error.code === "PGRST204" ||
+      haystack.indexOf("column") !== -1 || haystack.indexOf("schema cache") !== -1;
+  }
+
+  // ------------------------------------------------------------ checklist_log
+
+  async function loadLog() {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.from(TABLE_LOG).select("*");
+    if (error) throw error;
+    return data || [];
+  }
+
+  // Plain insert — never an upsert. Every status change or reading is a new
+  // row. Returns the inserted row (with its real id/created_at) so callers
+  // can append it to their local history without a re-fetch.
+  async function appendLogEntry(checkpointId, itemKey, status, oilLevel, notes, actor) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const payload = {
+      checkpoint_id: checkpointId,
+      item_key: itemKey,
+      status: status || null,
+      oil_level: oilLevel || null,
+      notes: notes || "",
+      actor: actor || null
+    };
+    let { data, error } = await client.from(TABLE_LOG).insert(payload).select();
+    if (error && isMissingColumnError(error, "actor")) {
+      delete payload.actor;
+      ({ data, error } = await client.from(TABLE_LOG).insert(payload).select());
+    }
+    if (error) throw error;
+    return data && data[0];
+  }
+
+  // Updates ONLY notes (+ actor) on an already-existing checklist_log row —
+  // used when a note is saved right after the status/oil-level click that
+  // just inserted that same row, so one atomic "I checked this, here's a
+  // note" action produces exactly one row instead of two. Deliberately never
+  // touches created_at (the original check's timestamp must stay put) or
+  // status/oil_level (those belong to the original insert only — see
+  // js/app.js's pendingRowId tracking in buildCheckRow/buildSubRow for the
+  // insert-vs-update decision). Requires the "Allow anon update" RLS policy
+  // on checklist_log (see supabase/schema.sql) — if that policy (or this
+  // function) isn't live on the project yet, this simply rejects like any
+  // other failed write, and callers fall back exactly like every other
+  // ChecklistStore call site already does (surface the inline save-error
+  // note; never silently swallow).
+  async function updateLogEntryNotes(rowId, notes, actor) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const payload = { notes: notes || "", actor: actor || null };
+    let { data, error } = await client.from(TABLE_LOG).update(payload).eq("id", rowId).select();
+    if (error && isMissingColumnError(error, "actor")) {
+      delete payload.actor;
+      ({ data, error } = await client.from(TABLE_LOG).update(payload).eq("id", rowId).select());
+    }
+    if (error) throw error;
+    return data && data[0];
+  }
+
+  // -------------------------------------------------------------- findings
+
+  async function loadFindings() {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.from(TABLE_FINDINGS).select("*");
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function loadFindingUpdates() {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.from(TABLE_FINDING_UPDATES).select("*");
+    if (error) throw error;
+    return data || [];
+  }
+
+  // Opens a brand-new finding + its first update. Use only when no
+  // unresolved finding already exists for this checkpoint+item — callers are
+  // responsible for that check (see getItemFindingInfo in app.js).
+  async function createFinding(checkpointId, itemKey, status, message, actor, isVendor) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const nowIso = new Date().toISOString();
+    const findingPayload = {
+      checkpoint_id: checkpointId,
+      item_key: itemKey,
+      status: status,
+      resolved_at: status === "resolved" ? nowIso : null,
+      opened_by: actor || null
+    };
+    let { data: findingRows, error: findingError } = await client.from(TABLE_FINDINGS).insert(findingPayload).select();
+    if (findingError && isMissingColumnError(findingError, "opened_by")) {
+      delete findingPayload.opened_by;
+      ({ data: findingRows, error: findingError } = await client.from(TABLE_FINDINGS).insert(findingPayload).select());
+    }
+    if (findingError) throw findingError;
+    const finding = findingRows && findingRows[0];
+    if (!finding) throw new Error("createFinding: insert returned no row");
+
+    const updatePayload = { finding_id: finding.id, status: status, message: message, actor: actor || null, is_vendor: !!isVendor };
+    let { data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select();
+    if (updateError && isMissingColumnError(updateError, "actor")) {
+      delete updatePayload.actor;
+      ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
+    }
+    if (updateError && isMissingColumnError(updateError, "is_vendor")) {
+      delete updatePayload.is_vendor;
+      ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
+    }
+    if (updateError) throw updateError;
+
+    return { finding: finding, update: updateRows && updateRows[0] };
+  }
+
+  // Appends an update to an EXISTING finding and updates that finding's own
+  // status (and resolved_at, when the new status is "resolved"). Never
+  // creates a duplicate finding.
+  async function addFindingUpdate(findingId, status, message, actor, isVendor) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const updatePayload = { finding_id: findingId, status: status, message: message, actor: actor || null, is_vendor: !!isVendor };
+    let { data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select();
+    if (updateError && isMissingColumnError(updateError, "actor")) {
+      delete updatePayload.actor;
+      ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
+    }
+    if (updateError && isMissingColumnError(updateError, "is_vendor")) {
+      delete updatePayload.is_vendor;
+      ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
+    }
+    if (updateError) throw updateError;
+
+    const nowIso = new Date().toISOString();
+    const { data: findingRows, error: findingError } = await client
+      .from(TABLE_FINDINGS)
+      .update({ status: status, resolved_at: status === "resolved" ? nowIso : null })
+      .eq("id", findingId)
+      .select();
+    if (findingError) throw findingError;
+
+    return { finding: findingRows && findingRows[0], update: updateRows && updateRows[0] };
+  }
+
+  // ------------------------------------------------------ password protection
+  // Thin wrappers over the 5 RPC functions defined in supabase/schema.sql
+  // (list_protected_user_names / verify_user_password / verify_master_password /
+  // set_user_password / remove_user_password) — an extra deterrent layer on
+  // top of the "attribution, not authentication" identity gate. Passwords are
+  // bcrypt-hashed server-side (see schema.sql) and never leave the database;
+  // these functions only ever return true/false or the set of protected
+  // names, never a hash.
+  //
+  // Same error contract as everything else in this file: every function
+  // below returns a Promise that REJECTS on any failure — including the RPC
+  // not existing yet because this migration hasn't landed on the live
+  // project. Callers in js/app.js treat a rejected listProtectedUserNames()
+  // as "nothing is protected yet" (empty set) rather than crashing, exactly
+  // like this app's existing load-error-banner pattern for a missing table.
+
+  async function listProtectedUserNames() {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("list_protected_user_names");
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function verifyUserPassword(userName, password) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("verify_user_password", { p_user_name: userName, p_password: password });
+    if (error) throw error;
+    return !!data;
+  }
+
+  async function verifyMasterPassword(password) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("verify_master_password", { p_password: password });
+    if (error) throw error;
+    return !!data;
+  }
+
+  // Returns false (no change made) if p_master_password doesn't match — never
+  // throws for a wrong master password, only for an actual connection/RPC
+  // failure.
+  async function setUserPassword(masterPassword, userName, newPassword) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("set_user_password", {
+      p_master_password: masterPassword,
+      p_user_name: userName,
+      p_new_password: newPassword
+    });
+    if (error) throw error;
+    return !!data;
+  }
+
+  async function removeUserPassword(masterPassword, userName) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.rpc("remove_user_password", {
+      p_master_password: masterPassword,
+      p_user_name: userName
+    });
+    if (error) throw error;
+    return !!data;
+  }
+
+  // ---------------------------------------------------------------- bulk load
+
+  // One-shot load of everything the app needs on startup — three parallel
+  // queries (not a per-item round trip). Callers derive "current" status
+  // client-side from the latest checklist_log row per (checkpoint_id,
+  // item_key), and current finding state from findings + finding_updates.
+  async function loadAll() {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const [log, findings, findingUpdates] = await Promise.all([
+      loadLog(),
+      loadFindings(),
+      loadFindingUpdates()
+    ]);
+    return { log: log, findings: findings, findingUpdates: findingUpdates };
+  }
+
+  window.ChecklistStore = {
+    loadAll: loadAll,
+    loadLog: loadLog,
+    appendLogEntry: appendLogEntry,
+    updateLogEntryNotes: updateLogEntryNotes,
+    loadFindings: loadFindings,
+    loadFindingUpdates: loadFindingUpdates,
+    createFinding: createFinding,
+    addFindingUpdate: addFindingUpdate,
+    listProtectedUserNames: listProtectedUserNames,
+    verifyUserPassword: verifyUserPassword,
+    verifyMasterPassword: verifyMasterPassword,
+    setUserPassword: setUserPassword,
+    removeUserPassword: removeUserPassword
+  };
+})();
