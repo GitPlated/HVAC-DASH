@@ -3861,6 +3861,50 @@ function isShiftReportModalOpen() {
   return !!modal && !modal.hidden;
 }
 
+// Best-effort notification to #irt-hellofresh-factor-aurora, per Jacob
+// 2026-09-22 -- techs were manually re-typing this same update into that
+// Slack channel after already logging it here; this makes the EOS Report
+// the one place to update, with Slack getting a copy automatically instead.
+// Called only after createShiftReport() has already succeeded, so the
+// report itself is safely saved regardless of what happens below -- any
+// failure here just means Slack didn't get a copy this time, so it's
+// console-only and never surfaced to the tech (matches the same
+// never-block-on-a-side-effect reasoning as the photo-upload failures a
+// few lines below this call site).
+function postShiftReportToSlack(findings, actor, checked, total, justification) {
+  // Andrew Wu's sandbox identity must produce zero real, externally-visible
+  // effects (see the sandbox guard above) -- a real Slack post is exactly
+  // that, so it's skipped here the same way his writes are faked elsewhere.
+  if (isSandboxActor()) return;
+  const payload = {
+    actor: actor,
+    findings: findings.map(function (f) {
+      const cp = EQUIPMENT_BY_ID[f.checkpoint_id];
+      const equipment = cp ? (cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "")) : f.checkpoint_id;
+      const d = shiftReportDrafts[f.id] || { status: f.status, message: "", isNoChange: false };
+      return {
+        equipment: equipment,
+        status: d.status,
+        message: d.message.trim(),
+        isNoChange: !!d.isNoChange,
+        noChangeStreak: computeNoChangeStreak(f.id)
+      };
+    }),
+    checklistChecked: checked,
+    checklistTotal: total,
+    checklistJustification: justification
+  };
+  fetch("https://mre-dashboard.app/api/post-eos-report-to-slack", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  }).then(function (res) {
+    if (!res.ok) return res.json().then(function (b) { console.error("Slack EOS post failed:", b.error || res.status); }).catch(function () {});
+  }).catch(function (e) {
+    console.error("Slack EOS post failed:", e);
+  });
+}
+
 async function submitShiftReport() {
   if (!canEdit()) return;
   const submitBtn = document.getElementById("shift-report-submit");
@@ -3919,6 +3963,8 @@ async function submitShiftReport() {
       checklist_justification: justification,
       photos: uploaded
     });
+
+    postShiftReportToSlack(findings, actor, checked, total, justification);
 
     renderFindingsView();
     refreshStatusesUI();
