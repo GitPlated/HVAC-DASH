@@ -75,6 +75,31 @@
       </div>
     </div>
 
+    <!-- Real MM Dashboard sign-in — password then, if that account has MFA
+         enrolled, a code step — for any card with an mmDashboardEmail (see
+         IDENTITY_OPTIONS/openMmDashboardLoginPrompt in js/app.js). Mutually
+         exclusive with the lightweight identity-password-prompt above. -->
+    <div class="identity-password-prompt" id="identity-mm-login-prompt" hidden>
+      <div class="update-form gate-inline-form">
+        <div class="update-form-title" id="identity-mm-login-title">Sign in (MM Dashboard password)</div>
+        <input type="password" class="notes-input" id="identity-mm-login-password" placeholder="Password" autocomplete="off">
+        <div class="save-error-note" id="identity-mm-login-error" hidden>Incorrect password. Try again.</div>
+        <div class="update-form-actions">
+          <button type="button" class="btn" id="identity-mm-login-submit">Submit</button>
+          <button type="button" class="btn" id="identity-mm-login-cancel">Cancel</button>
+        </div>
+      </div>
+      <div class="update-form gate-inline-form" id="identity-mm-mfa-prompt" hidden>
+        <div class="update-form-title">Enter your MFA code</div>
+        <input type="text" inputmode="numeric" autocomplete="one-time-code" class="notes-input" id="identity-mm-mfa-code" placeholder="6-digit code">
+        <div class="save-error-note" id="identity-mm-mfa-error" hidden>Incorrect code. Try again.</div>
+        <div class="update-form-actions">
+          <button type="button" class="btn" id="identity-mm-mfa-submit">Submit</button>
+          <button type="button" class="btn" id="identity-mm-mfa-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Invite to the new-site onboarding doc — a real, clearly-labeled
          button (unlike the plain-text "Manage passwords" link below), since
          this is meant to be noticed by anyone considering expansion, not
@@ -118,6 +143,7 @@
     <span class="app-header-sub" id="load-status" hidden>· Loading saved entries…</span>
   </div>
   <div class="header-actions">
+    <button type="button" class="btn btn-shift-report" id="btn-shift-report">End of Shift Report</button>
     <div class="acting-as" id="acting-as">
       <span class="acting-as-label">Acting as:</span>
       <span class="acting-as-name" id="acting-as-name">—</span>
@@ -238,6 +264,53 @@
   </div>
   <div class="slide-over-body" id="panel-body"></div>
 </aside>
+
+<!-- End of Shift Report — auto-generates the open-findings table and the
+     checklist tally each time it's opened (see openShiftReportModal in
+     js/app.js); everything below is a static scaffold, filled in dynamically. -->
+<div class="shift-report-overlay" id="shift-report-modal" role="dialog" aria-modal="true" aria-label="End of Shift Report" hidden>
+  <div class="shift-report-panel">
+    <div class="shift-report-head">
+      <h2 class="shift-report-title">End of Shift Report</h2>
+      <button type="button" class="btn-icon" id="shift-report-close-x" aria-label="Close">
+        <svg viewBox="0 0 20 20" width="18" height="18"><path d="M4 4l12 12M16 4L4 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+      </button>
+    </div>
+
+    <div class="shift-report-body">
+      <section class="shift-report-section">
+        <h3 class="shift-report-section-title">Open Findings</h3>
+        <p class="hint-text">Every currently unresolved finding, auto-generated below. An update is required on each one before this report can be submitted — every day, even if nothing changed.</p>
+        <div id="shift-report-findings"></div>
+      </section>
+
+      <section class="shift-report-section">
+        <h3 class="shift-report-section-title">Walkthrough Checklist Completion</h3>
+        <div id="shift-report-checklist-summary"></div>
+        <label class="shift-report-field-label" for="shift-report-checklist-justification">Justify this number</label>
+        <textarea class="notes-input" id="shift-report-checklist-justification" rows="3" placeholder="Why were this many items checked this shift? (required)"></textarea>
+      </section>
+
+      <section class="shift-report-section">
+        <h3 class="shift-report-section-title">Photos (optional)</h3>
+        <div class="photo-drop-zone" id="shift-report-photo-drop" tabindex="0" role="button" aria-label="Upload photos">
+          <div class="photo-drop-icon">📷</div>
+          <p class="photo-drop-main">Click to upload or drag &amp; drop</p>
+          <p class="photo-drop-sub">JPG, PNG, HEIC, HEIF, WEBP, GIF — up to 15MB each, 8 photos max</p>
+        </div>
+        <input type="file" id="shift-report-photo-input" accept=".jpg,.jpeg,.png,.heic,.heif,.webp,.gif,image/*" multiple hidden>
+        <div class="save-error-note" id="shift-report-photo-msg" hidden></div>
+        <div class="photo-grid" id="shift-report-photo-grid"></div>
+      </section>
+    </div>
+
+    <div class="save-error-note" id="shift-report-submit-error" hidden></div>
+    <div class="update-form-actions shift-report-actions">
+      <button type="button" class="btn" id="shift-report-submit">Submit Report</button>
+      <button type="button" class="btn" id="shift-report-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <script src="js/rooms.js"></script>
 <script src="js/data.js"></script>

@@ -36,15 +36,24 @@ The raw exported CSV this was built from is kept at
 
 ## Persistence
 
-Entries are saved to a **shared Supabase database** (see
-[`js/supabase-client.js`](js/supabase-client.js) and
-[`supabase/schema.sql`](supabase/schema.sql)) — every reading is visible to
-anyone with this dashboard's link, and syncs across devices immediately.
-There's no login: access control is enforced by Postgres Row Level Security
-policies, deliberately left open to match this tool's no-login internal use.
-If the dashboard can't reach the database on load, it shows an error banner
-and falls back to displaying everything as "Not checked" rather than
-crashing.
+Entries are saved to a **shared Supabase database** — every reading is
+visible to anyone with this dashboard's link, and syncs across devices
+immediately. There's no login: access control is enforced by Postgres Row
+Level Security policies, deliberately left open to match this tool's
+no-login internal use. If the dashboard can't reach the database on load,
+it shows an error banner and falls back to displaying everything as "Not
+checked" rather than crashing.
+
+As of 2026-09-22 this runs on **MM_Dashboard's own Supabase project**
+(consolidating with Goodyear's own deployment, `MM_Dashboard/hvac-goodyear/`,
+onto the same infrastructure) under `hvac_aurora_`-prefixed tables/
+functions/storage bucket — see [`js/supabase-client.js`](js/supabase-client.js)
+for the exact names, and MM_Dashboard's own repo (`hvac_aurora_tables.sql`,
+`hvac_aurora_data_migration.sql`, `hvac_aurora_shift_report_photos_storage.sql`)
+for the live schema. `supabase/schema.sql` and
+`supabase/shift_report_photos_storage.sql` in this repo are kept only as a
+historical record of the schema up to this point — see their own header
+notes.
 
 Every status change and reading is appended to an activity log rather than
 overwritten — browsable on the **Daily Log** tab, filterable by day.
@@ -80,6 +89,34 @@ protection against casual impersonation, not just a UI nicety. It's still
 not full authentication: there's no login-attempt throttling, so it won't
 stop someone determined to script repeated guesses against it. Reasonable
 for a small trusted team; know that limit going in.
+
+## End of Shift Report
+
+A button in the header, between the title and "Acting as," opens a form
+that auto-generates everything a shift needs to hand off:
+
+- **Open Findings** — every currently unresolved finding, pulled live. An
+  update is required on each one before the report can be submitted —
+  every shift, even if the answer is "No change." A finding with a run of
+  consecutive "No change" updates shows a streak badge (e.g. "No change
+  ×3 days") so a stalled issue doesn't quietly disappear into the
+  background.
+- **Walkthrough Checklist Completion** — how many of the facility's
+  checklist items were touched today, color-coded (33% or less: red,
+  33-66%: orange, 66% or more: green), with a required text box to justify
+  the number.
+- **Photos (optional)** — attach photos in whatever format a phone
+  actually produces (JPG, PNG, HEIC/HEIF, WEBP, GIF), up to 15MB each and
+  8 photos per report, uploaded to Supabase Storage at submit time. Mirrors
+  the size cap and HEIC-to-JPEG conversion MM_Dashboard's own AMM End of
+  Shift Report uses for the same reason: HEIC (the default iPhone camera
+  format) doesn't render in any browser but Safari.
+
+Nothing here saves incrementally — the whole report submits as one action.
+Each finding's update is an ordinary `finding_updates` row (the same table
+the Findings tab's own "Log an update" form writes to); the checklist tally
+and photos are stored in their own `shift_reports` row. See
+`supabase/schema.sql`'s "v6" block and `supabase/shift_report_photos_storage.sql`.
 
 ## Expanding to a new site
 

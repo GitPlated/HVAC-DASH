@@ -498,6 +498,14 @@ select:disabled, input:disabled, textarea:disabled {
   display: none;
 }
 
+/* Same fix as #manage-master-prompt[hidden] above: #identity-mm-mfa-prompt
+   also carries .update-form's `display: flex`, which needs an explicit
+   override once its own hidden attribute is toggled independently of its
+   parent #identity-mm-login-prompt. */
+#identity-mm-mfa-prompt[hidden] {
+  display: none;
+}
+
 .gate-inline-form {
   max-width: 360px;
   width: 100%;
@@ -1895,4 +1903,242 @@ button.finding-indicator {
   color: var(--ink-muted);
   font-size: 0.85rem;
   padding: 24px 4px;
+}
+
+/* ------------------------------------------------------------ end of shift report */
+.btn-shift-report {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+
+.btn-shift-report:hover {
+  background: var(--bg-panel-raised);
+}
+
+.btn-shift-report:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: var(--border);
+  color: var(--ink-muted);
+}
+
+.shift-report-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: safe center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.shift-report-overlay[hidden] {
+  display: none;
+}
+
+.shift-report-panel {
+  margin: auto 0;
+  width: 100%;
+  max-width: 760px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 10px 40px var(--shadow);
+}
+
+.shift-report-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shift-report-title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.shift-report-body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.shift-report-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shift-report-section-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.shift-report-field-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+
+.shift-report-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.shift-report-finding-row {
+  gap: 10px;
+}
+
+.shift-report-last-update {
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.shift-report-last-update-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 3px;
+}
+
+.shift-report-last-update-message {
+  font-size: 0.85rem;
+  color: var(--ink-primary);
+}
+
+.shift-report-streak-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--status-warning);
+  border: 1px solid rgba(250, 178, 25, 0.5);
+  white-space: nowrap;
+}
+
+.shift-report-checklist-badge {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+/* ------------------------------------------------------------ photo upload */
+.photo-drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 20px 14px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--bg-panel-raised);
+}
+
+.photo-drop-zone:hover,
+.photo-drop-zone.drag-over {
+  border-color: var(--status-warning);
+  background: rgba(250, 178, 25, 0.08);
+}
+
+.photo-drop-zone:focus-visible {
+  outline: 2px solid var(--status-warning);
+  outline-offset: 2px;
+}
+
+.photo-drop-icon {
+  font-size: 1.5rem;
+  margin-bottom: 4px;
+}
+
+.photo-drop-main {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-primary);
+}
+
+.photo-drop-sub {
+  margin: 4px 0 0;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+}
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.photo-thumb {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-panel-raised);
+  aspect-ratio: 1;
+}
+
+.photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.photo-thumb-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.photo-thumb-remove:hover {
+  background: rgba(208, 59, 59, 0.85);
+}
+
+.photo-thumb-size {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 2px 5px;
+  font-size: 0.6rem;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+
+@media (max-width: 639px) {
+  .shift-report-panel {
+    padding: 14px;
+    gap: 12px;
+  }
 }

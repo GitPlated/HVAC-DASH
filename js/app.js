@@ -105,15 +105,22 @@ const CATEGORY_COLORS = {
 // disable at render time AND to early-return inside the click/change
 // handler itself, so nothing is reachable through devtools DOM tampering
 // either).
+// mmDashboardEmail marks a card as paired to a real MM_Dashboard (Supabase
+// Auth) account, confirmed live against mm_roster on 2026-09-22 — every
+// other named identity (Ronald Vogel) has no MM_Dashboard login at all and
+// keeps this app's own lightweight per-name password (see
+// hvac_aurora_user_passwords) completely untouched. Clicking a card with
+// this field opens the real sign-in prompt instead of the lightweight one —
+// see openMmDashboardLoginPrompt below.
 const IDENTITY_OPTIONS = [
-  { id: "brett", name: "Brett Stone", themeClass: "identity-theme-brett" },
-  { id: "jacolby", name: "Jacolby Moffett", themeClass: "identity-theme-jacolby" },
-  { id: "john", name: "John Danhoff", themeClass: "identity-theme-john" },
-  { id: "michael", name: "Michael Petersen", themeClass: "identity-theme-michael" },
-  { id: "david", name: "David Haney", themeClass: "identity-theme-david" },
+  { id: "brett", name: "Brett Stone", themeClass: "identity-theme-brett", mmDashboardEmail: "brett.stone@factor75.com" },
+  { id: "jacolby", name: "Jacolby Moffett", themeClass: "identity-theme-jacolby", mmDashboardEmail: "jacolby.moffett@factor75.com" },
+  { id: "john", name: "John Danhoff", themeClass: "identity-theme-john", mmDashboardEmail: "john.danhoff@factor75.com" },
+  { id: "michael", name: "Michael Petersen", themeClass: "identity-theme-michael", mmDashboardEmail: "michael.petersen@factor75.com" },
+  { id: "david", name: "David Haney", themeClass: "identity-theme-david", mmDashboardEmail: "david.haney@factor75.com" },
   { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald" },
-  { id: "wilberth", name: "Wilberth Carrizal", themeClass: "identity-theme-wilberth" },
-  { id: "tyler", name: "Tyler Christensen", themeClass: "identity-theme-tyler" },
+  { id: "wilberth", name: "Wilberth Carrizal", themeClass: "identity-theme-wilberth", mmDashboardEmail: "wilberth.carrizal@factor75.com" },
+  { id: "tyler", name: "Tyler Christensen", themeClass: "identity-theme-tyler", mmDashboardEmail: "tyler.christensen@factor75.com" },
   // Full write access in the UI (canEdit() below treats him like any other
   // named identity), but every write is intercepted before it reaches
   // Supabase — see the sandbox guard further down this file, which wraps
@@ -151,22 +158,31 @@ const LOCK_ICON_SVG = '<svg viewBox="0 0 20 20" width="12" height="12" aria-hidd
   '<rect x="4.5" y="9" width="11" height="7.5" rx="1.4" fill="currentColor"/></svg>';
 
 // Adds/removes the small "Password required" badge on each named
-// .identity-card per PROTECTED_USER_NAMES — icon + visible text together
-// (never icon/color alone), matching this app's existing rule. Admin never
-// gets one (it can never have a password — see the management panel, which
-// excludes it entirely).
+// .identity-card — icon + visible text together (never icon/color alone),
+// matching this app's existing rule. Admin never gets one (it can never
+// have a password — see the management panel, which excludes it entirely).
+// An mmDashboardEmail card is ALWAYS locked (a fixed property of the card,
+// not a toggleable state), labeled distinctly so it's clear a real
+// MM Dashboard sign-in is coming, not this app's own lightweight password.
 function updateIdentityLockIndicators() {
   document.querySelectorAll(".identity-card[data-identity]").forEach(function (card) {
     const identity = IDENTITY_BY_ID[card.dataset.identity];
     if (!identity || identity.isAdmin) return;
     let lock = card.querySelector(".identity-card-lock");
-    if (isNameProtected(identity.name)) {
+    if (identity.mmDashboardEmail) {
       if (!lock) {
         lock = document.createElement("span");
         lock.className = "identity-card-lock";
-        lock.innerHTML = LOCK_ICON_SVG + "<span>Password required</span>";
         card.appendChild(lock);
       }
+      lock.innerHTML = LOCK_ICON_SVG + "<span>MM Dashboard sign-in required</span>";
+    } else if (isNameProtected(identity.name)) {
+      if (!lock) {
+        lock = document.createElement("span");
+        lock.className = "identity-card-lock";
+        card.appendChild(lock);
+      }
+      lock.innerHTML = LOCK_ICON_SVG + "<span>Password required</span>";
     } else if (lock) {
       lock.remove();
     }
@@ -274,7 +290,7 @@ function isSandboxActor() {
   };
 
   const realAddFindingUpdate = ChecklistStore.addFindingUpdate;
-  ChecklistStore.addFindingUpdate = function (findingId, status, message, actor, isVendor) {
+  ChecklistStore.addFindingUpdate = function (findingId, status, message, actor, isVendor, isNoChange) {
     if (!isSandboxActor()) return realAddFindingUpdate.apply(ChecklistStore, arguments);
     const nowIso = new Date().toISOString();
     // The existing finding may be perfectly real (opened by someone else
@@ -296,9 +312,26 @@ function isSandboxActor() {
       },
       update: {
         id: nextFakeId--, finding_id: findingId, status: status, message: message,
-        actor: actor || null, is_vendor: !!isVendor, created_at: nowIso
+        actor: actor || null, is_vendor: !!isVendor, is_no_change: !!isNoChange, created_at: nowIso
       }
     });
+  };
+
+  // Shift-report writes fake the same way as everything else above: Andrew
+  // sees a normal-looking success (a fake row / fake public URL) and nothing
+  // reaches Supabase. Fake photo URLs are never fetchable, but nothing in
+  // this app dereferences a shift report's own photos after submit (there is
+  // no "browse past reports" view), so that's never actually observed.
+  const realCreateShiftReport = ChecklistStore.createShiftReport;
+  ChecklistStore.createShiftReport = function (payload) {
+    if (!isSandboxActor()) return realCreateShiftReport.apply(ChecklistStore, arguments);
+    return Promise.resolve(Object.assign({ id: nextFakeId--, created_at: new Date().toISOString() }, payload));
+  };
+
+  const realUploadShiftReportPhoto = ChecklistStore.uploadShiftReportPhoto;
+  ChecklistStore.uploadShiftReportPhoto = function (path, file) {
+    if (!isSandboxActor()) return realUploadShiftReportPhoto.apply(ChecklistStore, arguments);
+    return Promise.resolve("sandbox://not-uploaded/" + path);
   };
 })();
 
@@ -319,6 +352,7 @@ function applyIdentityTheme(identity) {
 function updateActingAsUI() {
   const nameEl = document.getElementById("acting-as-name");
   const noteEl = document.getElementById("acting-as-note");
+  updateShiftReportButtonUI();
   if (nameEl) nameEl.textContent = CURRENT_IDENTITY ? CURRENT_IDENTITY.name : "—";
   if (noteEl) {
     // Mutually exclusive — a single identity is never both Admin and the
@@ -340,6 +374,7 @@ function showIdentityGate() {
   applyIdentityTheme(null);
   updateActingAsUI();
   closeIdentityPasswordPrompt();
+  closeMmDashboardLoginPrompt();
   closeManagePanel();
   const gate = document.getElementById("identity-gate");
   if (gate) gate.hidden = false;
@@ -357,6 +392,7 @@ function selectIdentity(identityId) {
   applyIdentityTheme(identity);
   updateActingAsUI();
   closeIdentityPasswordPrompt();
+  closeMmDashboardLoginPrompt();
   closeManagePanel();
   hideIdentityGate();
   // Re-render anything whose edit-affordance/attribution state depends on
@@ -430,6 +466,144 @@ function submitIdentityPassword() {
     })
     .catch(function (e) {
       console.error("verify_user_password failed:", identity.name, e);
+      if (submitBtn) submitBtn.disabled = false;
+      err.textContent = "Couldn't verify — check your connection and try again.";
+      err.hidden = false;
+    });
+}
+
+// -------------------------------------------------- MM Dashboard linked login
+// Real sign-in detour for any card with an mmDashboardEmail (see
+// IDENTITY_OPTIONS) — password, then an MFA code step if that account has
+// one enrolled, using the same live check MM_Dashboard's own login.html
+// runs. Mutually exclusive with the lightweight identity-password-prompt
+// above (a card only ever has one or the other); gateMmLoginPendingId
+// mirrors gatePendingIdentityId's "only one prompt open at a time" role.
+let gateMmLoginPendingId = null;
+let gateMmLoginFactorId = null; // set once the password step succeeds and a pending MFA challenge is found
+
+function openMmDashboardLoginPrompt(identity) {
+  closeIdentityPasswordPrompt();
+  closeManagePanel();
+  gateMmLoginPendingId = identity.id;
+  gateMmLoginFactorId = null;
+  const prompt = document.getElementById("identity-mm-login-prompt");
+  const title = document.getElementById("identity-mm-login-title");
+  const input = document.getElementById("identity-mm-login-password");
+  const err = document.getElementById("identity-mm-login-error");
+  const submitBtn = document.getElementById("identity-mm-login-submit");
+  const mfaStep = document.getElementById("identity-mm-mfa-prompt");
+  if (!prompt || !title || !input || !err) return;
+  title.textContent = "Sign in as " + identity.name + " (MM Dashboard password)";
+  input.value = "";
+  err.hidden = true;
+  if (submitBtn) submitBtn.disabled = false;
+  if (mfaStep) mfaStep.hidden = true;
+  prompt.hidden = false;
+  input.focus();
+}
+
+// Cancel, a successful sign-in, or picking a different card all return to a
+// clean slate — never leaves a typed password or a half-finished MFA step
+// sitting in the DOM, and never leaves a real session signed in on this
+// shared device.
+function closeMmDashboardLoginPrompt() {
+  const hadPending = !!gateMmLoginPendingId;
+  gateMmLoginPendingId = null;
+  gateMmLoginFactorId = null;
+  const prompt = document.getElementById("identity-mm-login-prompt");
+  const input = document.getElementById("identity-mm-login-password");
+  const err = document.getElementById("identity-mm-login-error");
+  const mfaStep = document.getElementById("identity-mm-mfa-prompt");
+  const mfaInput = document.getElementById("identity-mm-mfa-code");
+  const mfaErr = document.getElementById("identity-mm-mfa-error");
+  if (prompt) prompt.hidden = true;
+  if (input) input.value = "";
+  if (err) err.hidden = true;
+  if (mfaStep) mfaStep.hidden = true;
+  if (mfaInput) mfaInput.value = "";
+  if (mfaErr) mfaErr.hidden = true;
+  // A cancel/close reached while a real session is active (mid password-
+  // verified-but-MFA-pending, or any other unexpected state) must never
+  // leave that session signed in behind it — belt-and-suspenders on top of
+  // submitMmDashboardLogin's own sign-out calls.
+  if (hadPending) ChecklistStore.signOutMmDashboardAccount();
+}
+
+function submitMmDashboardLogin() {
+  if (!gateMmLoginPendingId) return;
+  const identity = IDENTITY_BY_ID[gateMmLoginPendingId];
+  const input = document.getElementById("identity-mm-login-password");
+  const err = document.getElementById("identity-mm-login-error");
+  const submitBtn = document.getElementById("identity-mm-login-submit");
+  if (!identity || !input) return;
+  const typed = input.value;
+  if (!typed) return;
+  err.hidden = true;
+  if (submitBtn) submitBtn.disabled = true;
+
+  ChecklistStore.signInMmDashboardAccount(identity.mmDashboardEmail, typed)
+    .then(function () {
+      return ChecklistStore.getMmDashboardPendingMfaChallenge();
+    })
+    .then(function (pending) {
+      if (submitBtn) submitBtn.disabled = false;
+      if (pending) {
+        gateMmLoginFactorId = pending.factorId;
+        document.getElementById("identity-mm-mfa-prompt").hidden = false;
+        document.getElementById("identity-mm-mfa-code").focus();
+        return;
+      }
+      // No MFA enrolled — the password check alone already fully
+      // authenticated this session. Capture the win, then immediately drop
+      // the real session (see the module comment above) before finishing
+      // the normal identity-select flow.
+      ChecklistStore.signOutMmDashboardAccount().then(function () {
+        gateMmLoginPendingId = null;
+        closeMmDashboardLoginPrompt();
+        selectIdentity(identity.id);
+      });
+    })
+    .catch(function (e) {
+      console.error("MM Dashboard sign-in failed:", identity.name, e);
+      if (submitBtn) submitBtn.disabled = false;
+      err.textContent = "Incorrect password. Try again.";
+      err.hidden = false;
+      input.value = "";
+      input.focus();
+    });
+}
+
+function submitMmDashboardMfaCode() {
+  if (!gateMmLoginPendingId || !gateMmLoginFactorId) return;
+  const identity = IDENTITY_BY_ID[gateMmLoginPendingId];
+  const input = document.getElementById("identity-mm-mfa-code");
+  const err = document.getElementById("identity-mm-mfa-error");
+  const submitBtn = document.getElementById("identity-mm-mfa-submit");
+  if (!identity || !input) return;
+  const code = input.value.trim();
+  if (!code) return;
+  err.hidden = true;
+  if (submitBtn) submitBtn.disabled = true;
+
+  ChecklistStore.verifyMmDashboardMfaCode(gateMmLoginFactorId, code)
+    .then(function (ok) {
+      if (submitBtn) submitBtn.disabled = false;
+      if (!ok) {
+        err.textContent = "Incorrect code. Try again.";
+        err.hidden = false;
+        input.value = "";
+        input.focus();
+        return;
+      }
+      ChecklistStore.signOutMmDashboardAccount().then(function () {
+        gateMmLoginPendingId = null;
+        closeMmDashboardLoginPrompt();
+        selectIdentity(identity.id);
+      });
+    })
+    .catch(function (e) {
+      console.error("MM Dashboard MFA verification failed:", identity.name, e);
       if (submitBtn) submitBtn.disabled = false;
       err.textContent = "Couldn't verify — check your connection and try again.";
       err.hidden = false;
@@ -654,9 +828,17 @@ function wireIdentityGate() {
     card.addEventListener("click", function () {
       const identity = IDENTITY_BY_ID[card.dataset.identity];
       if (!identity) return;
-      // Only named, currently-protected users get the password detour —
-      // Admin and every unprotected named user still select instantly, zero
+      // A card linked to a real MM_Dashboard account always gets the real
+      // sign-in detour, checked first — it's a fixed property of the card,
+      // not a toggleable "protected" state the way the lightweight
+      // per-name password is. Only named, currently-protected users (with
+      // neither of those) get the lightweight password detour — Admin and
+      // every unprotected named user still select instantly, zero
       // friction, exactly as before this feature.
+      if (identity.mmDashboardEmail) {
+        openMmDashboardLoginPrompt(identity);
+        return;
+      }
       if (!identity.isAdmin && isNameProtected(identity.name)) {
         openIdentityPasswordPrompt(identity);
         return;
@@ -675,6 +857,27 @@ function wireIdentityGate() {
   if (idInput) {
     idInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter") submitIdentityPassword();
+    });
+  }
+
+  const mmSubmit = document.getElementById("identity-mm-login-submit");
+  if (mmSubmit) mmSubmit.addEventListener("click", submitMmDashboardLogin);
+  const mmCancel = document.getElementById("identity-mm-login-cancel");
+  if (mmCancel) mmCancel.addEventListener("click", closeMmDashboardLoginPrompt);
+  const mmInput = document.getElementById("identity-mm-login-password");
+  if (mmInput) {
+    mmInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") submitMmDashboardLogin();
+    });
+  }
+  const mmMfaSubmit = document.getElementById("identity-mm-mfa-submit");
+  if (mmMfaSubmit) mmMfaSubmit.addEventListener("click", submitMmDashboardMfaCode);
+  const mmMfaCancel = document.getElementById("identity-mm-mfa-cancel");
+  if (mmMfaCancel) mmMfaCancel.addEventListener("click", closeMmDashboardLoginPrompt);
+  const mmMfaInput = document.getElementById("identity-mm-mfa-code");
+  if (mmMfaInput) {
+    mmMfaInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") submitMmDashboardMfaCode();
     });
   }
 
@@ -3229,6 +3432,525 @@ function renderOverviewView() {
   });
 }
 
+// -------------------------------------------------------- end of shift report
+// Header button, between the title and "Acting as" — a dedicated form that
+// auto-generates every currently open finding (requiring a same-day update
+// on each, an explicit "No change" option included) plus a walkthrough-
+// checklist completion tally and optional photos. Submitted as ONE atomic
+// action — unlike the rest of this app's edit affordances (which save on
+// every click), nothing here reaches Supabase until "Submit Report" succeeds,
+// matching MM_Dashboard's AMM End of Shift Report's own submit-at-the-end
+// philosophy for its photo attachments.
+
+const SHIFT_REPORT_PHOTO_MAX_BYTES = 15 * 1024 * 1024; // 15MB, matches MM_Dashboard's AMM End of Shift Report
+const SHIFT_REPORT_PHOTO_MAX_COUNT = 8;
+const SHIFT_REPORT_PHOTO_ALLOWED_EXT = new Set(["jpg", "jpeg", "png", "heic", "heif", "webp", "gif"]);
+
+// findingId -> { status, message, isNoChange } — local drafts for whichever
+// report is currently open, discarded on close/submit/cancel. Never partially
+// persisted — a report is all-or-nothing.
+let shiftReportDrafts = {};
+// { file, localId, previewUrl } — picked this session, uploaded only at
+// submit time (a File object can't survive anything else anyway, and this
+// mirrors the AMM report's own reasoning for the same choice).
+let shiftReportPhotoFiles = [];
+let _shiftReportNextPhotoLocalId = 1;
+
+// Consecutive most-recent updates on this finding flagged is_no_change,
+// counting back from the newest until the first real update (or the
+// finding's opening, which is never a "no change"). UPDATES_BY_FINDING is
+// already sorted newest-first (see rebuildFindingMaps), so this is a plain
+// walk from the front. Displayed as "days" in the UI on the assumption of
+// roughly one update per day per open finding — the exact rule this same
+// feature exists to enforce going forward.
+function computeNoChangeStreak(findingId) {
+  const updates = UPDATES_BY_FINDING[findingId] || [];
+  let streak = 0;
+  for (let i = 0; i < updates.length; i++) {
+    if (!updates[i].is_no_change) break;
+    streak++;
+  }
+  return streak;
+}
+
+// Total walkthrough checklist items across the whole facility — group
+// checklist entries only (ci.item under groupChecklist), not the rack
+// oil-level subsections, which are a different kind of reading with no
+// "checked" concept of their own.
+function walkthroughChecklistTotalCount() {
+  let total = 0;
+  EQUIPMENT_GROUPS.forEach(function (cp) { total += (cp.groupChecklist || []).length; });
+  return total;
+}
+
+// "This shift" == today's local calendar day — this app has no shift-
+// boundary concept anywhere else (only calendar days, see the Overview
+// page's own day-snapshot model), so a second report submitted later the
+// same day will show the same day-wide count. Reuses getTodaysLogEntry, the
+// same "touched today" definition the per-item "reaffirm today" control
+// already relies on.
+function walkthroughChecklistCheckedTodayCount() {
+  let checked = 0;
+  EQUIPMENT_GROUPS.forEach(function (cp) {
+    (cp.groupChecklist || []).forEach(function (ci) {
+      if (getTodaysLogEntry(cp.id, ci.item)) checked++;
+    });
+  });
+  return checked;
+}
+
+// Per Jacob: <=33% red, >=66% green, orange in between (the two literal
+// endpoints he gave overlap at 66 if taken as two closed ranges — resolved
+// by taking both stated endpoints at face value: "33% or less" and "66% or
+// more" are each exact boundaries, orange fills the open interval between).
+function shiftReportChecklistTier(pct) {
+  if (pct <= 33) return { color: "var(--status-critical)" };
+  if (pct >= 66) return { color: "var(--status-good)" };
+  return { color: "var(--status-warning)" };
+}
+
+function shiftReportOpenFindings() {
+  return FINDINGS_LIST.filter(function (f) { return f.status !== "resolved"; })
+    .sort(function (a, b) { return new Date(a.opened_at) - new Date(b.opened_at); });
+}
+
+function renderShiftReportChecklistSummary() {
+  const wrap = document.getElementById("shift-report-checklist-summary");
+  if (!wrap) return;
+  const checked = walkthroughChecklistCheckedTodayCount();
+  const total = walkthroughChecklistTotalCount();
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  const tier = shiftReportChecklistTier(pct);
+  wrap.innerHTML = "";
+  const badge = document.createElement("div");
+  badge.className = "shift-report-checklist-badge";
+  badge.style.background = tier.color;
+  badge.textContent = checked + " / " + total + " checked (" + pct + "%)";
+  wrap.appendChild(badge);
+}
+
+function buildShiftReportFindingRow(finding) {
+  const cp = EQUIPMENT_BY_ID[finding.checkpoint_id];
+  const updates = UPDATES_BY_FINDING[finding.id] || [];
+  const mostRecent = updates.length ? updates[0] : null;
+  const streak = computeNoChangeStreak(finding.id);
+
+  const row = document.createElement("div");
+  row.className = "finding-card shift-report-finding-row";
+
+  const head = document.createElement("div");
+  head.className = "finding-card-head";
+  const titleWrap = document.createElement("div");
+  const title = document.createElement("div");
+  title.className = "finding-card-title";
+  title.textContent = cp ? (cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "")) : finding.checkpoint_id;
+  const meta = document.createElement("div");
+  meta.className = "finding-card-meta";
+  meta.textContent = itemDisplayName(cp, finding.item_key) + " · Opened " + new Date(finding.opened_at).toLocaleDateString();
+  titleWrap.appendChild(title);
+  titleWrap.appendChild(meta);
+  head.appendChild(titleWrap);
+
+  const badges = document.createElement("div");
+  badges.style.display = "flex";
+  badges.style.gap = "6px";
+  badges.style.flexWrap = "wrap";
+  badges.style.alignItems = "flex-start";
+  badges.appendChild(buildFindingStatusBadge(finding.status));
+  if (streak > 0) {
+    const streakBadge = document.createElement("span");
+    streakBadge.className = "shift-report-streak-badge";
+    streakBadge.textContent = "No change ×" + streak + " day" + (streak === 1 ? "" : "s");
+    badges.appendChild(streakBadge);
+  }
+  head.appendChild(badges);
+  row.appendChild(head);
+
+  if (mostRecent) {
+    const lastUpdateWrap = document.createElement("div");
+    lastUpdateWrap.className = "shift-report-last-update";
+    const label = document.createElement("div");
+    label.className = "shift-report-last-update-label";
+    label.textContent = "Last update — " + (mostRecent.actor || "Unknown") + ", " + new Date(mostRecent.created_at).toLocaleString();
+    const msg = document.createElement("div");
+    msg.className = "shift-report-last-update-message";
+    msg.textContent = mostRecent.message;
+    lastUpdateWrap.appendChild(label);
+    lastUpdateWrap.appendChild(msg);
+    row.appendChild(lastUpdateWrap);
+  }
+
+  if (!shiftReportDrafts[finding.id]) {
+    shiftReportDrafts[finding.id] = { status: finding.status, message: "", isNoChange: false };
+  }
+  const draft = shiftReportDrafts[finding.id];
+
+  const statusGroup = document.createElement("div");
+  statusGroup.className = "segmented update-status-group";
+  const statusButtons = [];
+  Object.keys(FINDING_STATE_META).forEach(function (val) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = FINDING_STATE_META[val].label;
+    if (val === draft.status) b.classList.add("is-active");
+    b.addEventListener("click", function () {
+      draft.status = val;
+      statusButtons.forEach(function (x) { x.el.classList.toggle("is-active", x.val === val); });
+    });
+    statusButtons.push({ val: val, el: b });
+    statusGroup.appendChild(b);
+  });
+  row.appendChild(statusGroup);
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "notes-input";
+  textarea.rows = 2;
+  textarea.placeholder = 'Today’s update (required — write "No change" if nothing changed)';
+  textarea.value = draft.message;
+  textarea.addEventListener("input", function () { draft.message = textarea.value; });
+  row.appendChild(textarea);
+
+  const noChangeLabel = document.createElement("label");
+  noChangeLabel.className = "update-vendor-check";
+  const noChangeCheckbox = document.createElement("input");
+  noChangeCheckbox.type = "checkbox";
+  noChangeCheckbox.checked = draft.isNoChange;
+  noChangeCheckbox.addEventListener("change", function () {
+    draft.isNoChange = noChangeCheckbox.checked;
+    if (noChangeCheckbox.checked && !textarea.value.trim()) {
+      textarea.value = "No change";
+      draft.message = "No change";
+    }
+  });
+  noChangeLabel.appendChild(noChangeCheckbox);
+  noChangeLabel.appendChild(document.createTextNode("No change since last update"));
+  row.appendChild(noChangeLabel);
+
+  const rowError = document.createElement("div");
+  rowError.className = "save-error-note shift-report-row-error";
+  rowError.textContent = "An update is required here.";
+  rowError.hidden = true;
+  row.appendChild(rowError);
+
+  if (!canEdit()) {
+    textarea.disabled = true;
+    noChangeCheckbox.disabled = true;
+    statusButtons.forEach(function (x) { x.el.disabled = true; });
+  }
+
+  return row;
+}
+
+function renderShiftReportFindings() {
+  const wrap = document.getElementById("shift-report-findings");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const findings = shiftReportOpenFindings();
+  if (!findings.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No active findings — nothing currently being tracked.";
+    wrap.appendChild(empty);
+    return;
+  }
+  findings.forEach(function (f) { wrap.appendChild(buildShiftReportFindingRow(f)); });
+}
+
+// -------------------------------------------------------- shift report photos
+function shiftReportPhotoMsg(text) {
+  const el = document.getElementById("shift-report-photo-msg");
+  if (!el) return;
+  el.textContent = text || "";
+  el.hidden = !text;
+}
+
+// Extension is checked first and is normally enough on its own — HEIC/HEIF
+// specifically is reported inconsistently across browsers/OSes, so a bare
+// MIME check alone would wrongly reject a real iPhone photo on some devices.
+// MIME is only consulted as a fallback for a file whose extension isn't
+// recognized at all. Mirrors MM_Dashboard's AMM End of Shift Report exactly.
+function isAllowedShiftReportPhotoFile(file) {
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  if (SHIFT_REPORT_PHOTO_ALLOWED_EXT.has(ext)) return true;
+  return !!(file.type && file.type.indexOf("image/") === 0);
+}
+
+function fmtShiftReportPhotoSize(bytes) {
+  return bytes >= 1024 * 1024 ? (bytes / (1024 * 1024)).toFixed(1) + "MB" : Math.round(bytes / 1024) + "KB";
+}
+
+function addShiftReportPhotoFiles(fileList) {
+  const files = Array.prototype.slice.call(fileList || []);
+  if (!files.length) return;
+  const rejected = [];
+  files.forEach(function (file) {
+    if (shiftReportPhotoFiles.length >= SHIFT_REPORT_PHOTO_MAX_COUNT) {
+      rejected.push(file.name + " (already at " + SHIFT_REPORT_PHOTO_MAX_COUNT + " photos)");
+      return;
+    }
+    if (!isAllowedShiftReportPhotoFile(file)) {
+      rejected.push(file.name + " (unsupported file type)");
+      return;
+    }
+    if (file.size > SHIFT_REPORT_PHOTO_MAX_BYTES) {
+      rejected.push(file.name + " (" + fmtShiftReportPhotoSize(file.size) + ", over the 15MB limit)");
+      return;
+    }
+    shiftReportPhotoFiles.push({ file: file, localId: _shiftReportNextPhotoLocalId++, previewUrl: URL.createObjectURL(file) });
+  });
+  shiftReportPhotoMsg(rejected.length ? "Skipped: " + rejected.join("; ") : "");
+  renderShiftReportPhotoGrid();
+}
+
+function removeShiftReportPhoto(localId) {
+  const idx = shiftReportPhotoFiles.findIndex(function (p) { return p.localId === localId; });
+  if (idx < 0) return;
+  URL.revokeObjectURL(shiftReportPhotoFiles[idx].previewUrl);
+  shiftReportPhotoFiles.splice(idx, 1);
+  renderShiftReportPhotoGrid();
+}
+
+function renderShiftReportPhotoGrid() {
+  const grid = document.getElementById("shift-report-photo-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  shiftReportPhotoFiles.forEach(function (p) {
+    const thumb = document.createElement("div");
+    thumb.className = "photo-thumb";
+    const img = document.createElement("img");
+    img.src = p.previewUrl;
+    img.alt = p.file.name;
+    img.loading = "lazy";
+    thumb.appendChild(img);
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "photo-thumb-remove";
+    removeBtn.title = "Remove";
+    removeBtn.textContent = "×";
+    removeBtn.addEventListener("click", function () { removeShiftReportPhoto(p.localId); });
+    thumb.appendChild(removeBtn);
+    const size = document.createElement("span");
+    size.className = "photo-thumb-size";
+    size.textContent = fmtShiftReportPhotoSize(p.file.size);
+    thumb.appendChild(size);
+    grid.appendChild(thumb);
+  });
+}
+
+// HEIC/HEIF (the default iPhone camera format) has no native decode support
+// in any browser except Safari/iOS WebKit. Converted here on the
+// submitter's own device at upload time so it displays broadly afterward;
+// falls back to uploading the original file untouched if decoding fails for
+// any reason (e.g. this device genuinely can't decode HEIC) — worse odds of
+// displaying later, but better than blocking the upload entirely. Ported
+// from MM_Dashboard's AMM End of Shift Report, same technique.
+async function normalizeShiftReportImageForUpload(file) {
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  if (ext !== "heic" && ext !== "heif") return file;
+  try {
+    const dataUrl = await new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(new Error("read failed")); };
+      reader.readAsDataURL(file);
+    });
+    const img = await new Promise(function (resolve, reject) {
+      const el = new Image();
+      el.onload = function () { resolve(el); };
+      el.onerror = function () { reject(new Error("decode failed")); };
+      el.src = dataUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+    const blob = await new Promise(function (resolve) { canvas.toBlob(resolve, "image/jpeg", 0.85); });
+    if (!blob) return file;
+    return new File([blob], file.name.replace(/\.(heic|heif)$/i, ".jpg"), { type: "image/jpeg" });
+  } catch (e) {
+    return file;
+  }
+}
+
+// Uploads every picked photo to Supabase Storage. All fire together — 8
+// concurrent uploads (SHIFT_REPORT_PHOTO_MAX_COUNT) is well within what
+// Storage handles fine. A single photo's failure doesn't abort the others or
+// the report itself — submitShiftReport treats this as best-effort and warns
+// after a successful save rather than blocking the whole submission over one
+// flaky upload.
+async function uploadShiftReportPhotos() {
+  if (!shiftReportPhotoFiles.length) return { uploaded: [], failed: [] };
+  const uploaded = [];
+  const failed = [];
+  await Promise.all(shiftReportPhotoFiles.map(async function (p) {
+    try {
+      const uploadFile = await normalizeShiftReportImageForUpload(p.file);
+      const ext = (uploadFile.name.split(".").pop() || "jpg").toLowerCase();
+      const path = new Date().toISOString().slice(0, 10) + "/" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + "." + ext;
+      const url = await ChecklistStore.uploadShiftReportPhoto(path, uploadFile);
+      uploaded.push({ url: url, name: p.file.name, size: uploadFile.size });
+    } catch (e) {
+      console.error("Failed to upload shift report photo:", p.file.name, e);
+      failed.push(p.file.name);
+    }
+  }));
+  return { uploaded: uploaded, failed: failed };
+}
+
+function wireShiftReportPhotoDropZone() {
+  const dropZone = document.getElementById("shift-report-photo-drop");
+  const input = document.getElementById("shift-report-photo-input");
+  if (!dropZone || !input) return;
+  dropZone.addEventListener("click", function () { input.click(); });
+  dropZone.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      input.click();
+    }
+  });
+  dropZone.addEventListener("dragover", function (e) {
+    e.preventDefault();
+    dropZone.classList.add("drag-over");
+  });
+  dropZone.addEventListener("dragleave", function () { dropZone.classList.remove("drag-over"); });
+  dropZone.addEventListener("drop", function (e) {
+    e.preventDefault();
+    dropZone.classList.remove("drag-over");
+    addShiftReportPhotoFiles(e.dataTransfer.files);
+  });
+  input.addEventListener("change", function () {
+    addShiftReportPhotoFiles(input.files);
+    input.value = ""; // allow picking the exact same file again after removing it
+  });
+}
+
+// -------------------------------------------------------- shift report modal
+function updateShiftReportButtonUI() {
+  const btn = document.getElementById("btn-shift-report");
+  if (btn) btn.disabled = !canEdit();
+}
+
+function discardShiftReportPhotoPreviews() {
+  shiftReportPhotoFiles.forEach(function (p) { URL.revokeObjectURL(p.previewUrl); });
+  shiftReportPhotoFiles = [];
+}
+
+function openShiftReportModal() {
+  if (!canEdit()) return;
+  shiftReportDrafts = {};
+  discardShiftReportPhotoPreviews();
+  document.getElementById("shift-report-checklist-justification").value = "";
+  shiftReportPhotoMsg("");
+  document.getElementById("shift-report-submit-error").hidden = true;
+  renderShiftReportFindings();
+  renderShiftReportChecklistSummary();
+  renderShiftReportPhotoGrid();
+  document.getElementById("shift-report-modal").hidden = false;
+}
+
+function closeShiftReportModal() {
+  discardShiftReportPhotoPreviews();
+  shiftReportDrafts = {};
+  document.getElementById("shift-report-modal").hidden = true;
+}
+
+function isShiftReportModalOpen() {
+  const modal = document.getElementById("shift-report-modal");
+  return !!modal && !modal.hidden;
+}
+
+async function submitShiftReport() {
+  if (!canEdit()) return;
+  const submitBtn = document.getElementById("shift-report-submit");
+  const cancelBtn = document.getElementById("shift-report-cancel");
+  const errEl = document.getElementById("shift-report-submit-error");
+  errEl.hidden = true;
+
+  const findings = shiftReportOpenFindings();
+  const rows = document.querySelectorAll(".shift-report-finding-row");
+  let firstMissingRow = null;
+  const missing = findings.filter(function (f, i) {
+    const d = shiftReportDrafts[f.id];
+    const isMissing = !d || !d.message.trim();
+    const rowEl = rows[i];
+    const rowErrorEl = rowEl && rowEl.querySelector(".shift-report-row-error");
+    if (rowErrorEl) rowErrorEl.hidden = !isMissing;
+    if (isMissing && !firstMissingRow) firstMissingRow = rowEl;
+    return isMissing;
+  });
+  if (missing.length) {
+    errEl.textContent = "An update is required on every open finding (" + missing.length + " missing) before this report can be submitted.";
+    errEl.hidden = false;
+    if (firstMissingRow) firstMissingRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+
+  const justificationEl = document.getElementById("shift-report-checklist-justification");
+  const justification = justificationEl.value.trim();
+  if (!justification) {
+    errEl.textContent = "Justify the number of checklist items checked this shift before submitting.";
+    errEl.hidden = false;
+    justificationEl.focus();
+    return;
+  }
+
+  submitBtn.disabled = true;
+  cancelBtn.disabled = true;
+
+  const checked = walkthroughChecklistCheckedTodayCount();
+  const total = walkthroughChecklistTotalCount();
+  const actor = currentActorName();
+
+  try {
+    const { uploaded, failed } = await uploadShiftReportPhotos();
+
+    for (const f of findings) {
+      const d = shiftReportDrafts[f.id];
+      const result = await ChecklistStore.addFindingUpdate(f.id, d.status, d.message.trim(), actor, findingMentionsVendor(f), d.isNoChange);
+      applyFindingResult(result.finding, result.update);
+    }
+
+    await ChecklistStore.createShiftReport({
+      actor: actor,
+      checklist_checked_count: checked,
+      checklist_total_count: total,
+      checklist_justification: justification,
+      photos: uploaded
+    });
+
+    renderFindingsView();
+    refreshStatusesUI();
+    if (CURRENT_PANEL_CHECKPOINT) buildPanelBody(CURRENT_PANEL_CHECKPOINT);
+    closeShiftReportModal();
+
+    if (failed.length) {
+      alert("Report saved, but " + failed.length + " photo(s) could not be uploaded: " + failed.join(", ") + ".");
+    }
+  } catch (e) {
+    console.error("Failed to submit shift report:", e);
+    errEl.textContent = "Couldn't save — check your connection and try again.";
+    errEl.hidden = false;
+  } finally {
+    submitBtn.disabled = false;
+    cancelBtn.disabled = false;
+  }
+}
+
+function wireShiftReportModal() {
+  const btn = document.getElementById("btn-shift-report");
+  if (btn) btn.addEventListener("click", openShiftReportModal);
+  const closeX = document.getElementById("shift-report-close-x");
+  if (closeX) closeX.addEventListener("click", closeShiftReportModal);
+  const cancelBtn = document.getElementById("shift-report-cancel");
+  if (cancelBtn) cancelBtn.addEventListener("click", closeShiftReportModal);
+  const submitBtn = document.getElementById("shift-report-submit");
+  if (submitBtn) submitBtn.addEventListener("click", submitShiftReport);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && isShiftReportModalOpen()) closeShiftReportModal();
+  });
+  wireShiftReportPhotoDropZone();
+}
+
 // -------------------------------------------------------------- header / tabs
 const TAB_IDS = ["floor", "roof", "log", "findings", "overview"];
 
@@ -3287,6 +4009,7 @@ async function init() {
   wireFindingsControls();
   wireOverviewControls();
   wireIdentityGate();
+  wireShiftReportModal();
   // Gate is visible by default in the HTML (no page-load flash of an
   // editable dashboard) — this just syncs the "Acting as" header UI (name
   // placeholder, hidden view-only badge) to the no-identity-selected-yet

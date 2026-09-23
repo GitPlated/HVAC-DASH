@@ -1,9 +1,9 @@
 /*
  * supabase-client.js — thin persistence layer over the three append-only /
- * tracked-issue tables described in supabase/schema.sql:
- *   public.checklist_log    — append-only, one row per status/reading change.
- *   public.findings         — one row per tracked issue.
- *   public.finding_updates  — append-only, immutable updates within a finding.
+ * tracked-issue tables described in MM_Dashboard's hvac_aurora_tables.sql:
+ *   public.hvac_aurora_checklist_log    — append-only, one row per status/reading change.
+ *   public.hvac_aurora_findings         — one row per tracked issue.
+ *   public.hvac_aurora_finding_updates  — append-only, immutable updates within a finding.
  *
  * Exposed as a small async API on window.ChecklistStore. Loaded after the
  * supabase-js CDN script and before app.js, which is the only consumer of
@@ -12,11 +12,11 @@
  * NOTE ON THE KEY BELOW: this is the Supabase "anon" / publishable key, which
  * is DESIGNED to be shipped in client-side code — it is not a secret. Access
  * control for these tables is enforced entirely by Postgres Row Level
- * Security policies (see supabase/schema.sql), which the tool owner has
- * deliberately left fully open to the anon role for select/insert/update/
- * delete, since this is a no-login internal tool. Do not treat this key as a
- * leak, and never put a "service_role" key in this file (or anywhere
- * client-side) — that key bypasses RLS entirely.
+ * Security policies (see MM_Dashboard's hvac_aurora_tables.sql), which the
+ * tool owner has deliberately left fully open to the anon role for
+ * select/insert/update/delete, since this is a no-login internal tool. Do
+ * not treat this key as a leak, and never put a "service_role" key in this
+ * file (or anywhere client-side) — that key bypasses RLS entirely.
  *
  * Error handling contract: every function below returns a Promise that
  * REJECTS (throws, if awaited) on any failure — network error, missing
@@ -29,12 +29,24 @@
 (function () {
   "use strict";
 
-  const SUPABASE_URL = "https://tlclamhggixfhqhsobgq.supabase.co";
-  const SUPABASE_ANON_KEY = "sb_publishable_m6afe_yHDVNh6yUpGhc3Uw_d_sLFz2W";
+  // MM_Dashboard's own Supabase project — moved off Aurora's original
+  // separate standalone project (tlclamhggixfhqhsobgq.supabase.co) per
+  // Jacob, consolidating onto existing infrastructure, same as Goodyear's
+  // real deployment (MM_Dashboard/hvac-goodyear/) did before this. Aurora's
+  // rows live here under the hvac_aurora_ prefixed tables/functions below,
+  // so they can never collide with either MM_Dashboard's own ~15 tables or
+  // Goodyear's already-live hvac_goodyear_ ones. Aurora's real history
+  // (896 checklist_log / 31 findings / 108 finding_updates rows as of
+  // 2026-09-22) was migrated into these tables via a one-time
+  // hvac_aurora_data_migration.sql run — see MM_Dashboard's own repo.
+  const SUPABASE_URL = "https://jwdxzbusibvffqtacrib.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_s8RaqMOBJx5PTL_FAErKUQ_0e5x4xLJ";
 
-  const TABLE_LOG = "checklist_log";
-  const TABLE_FINDINGS = "findings";
-  const TABLE_FINDING_UPDATES = "finding_updates";
+  const TABLE_LOG = "hvac_aurora_checklist_log";
+  const TABLE_FINDINGS = "hvac_aurora_findings";
+  const TABLE_FINDING_UPDATES = "hvac_aurora_finding_updates";
+  const TABLE_SHIFT_REPORTS = "hvac_aurora_shift_reports";
+  const SHIFT_REPORT_PHOTOS_BUCKET = "hvac-aurora-shift-report-photos";
 
   let client = null;
   let initError = null;
@@ -210,12 +222,18 @@
 
   // Appends an update to an EXISTING finding and updates that finding's own
   // status (and resolved_at, when the new status is "resolved"). Never
-  // creates a duplicate finding.
-  async function addFindingUpdate(findingId, status, message, actor, isVendor) {
+  // creates a duplicate finding. isNoChange flags an End of Shift Report
+  // update that says nothing changed (see js/app.js's shift-report module) —
+  // stored as its own column rather than inferred from the message text, so
+  // a consecutive-no-change streak can be computed reliably.
+  async function addFindingUpdate(findingId, status, message, actor, isVendor, isNoChange) {
     const failure = initFailure();
     if (failure) return failure;
 
-    const updatePayload = { finding_id: findingId, status: status, message: message, actor: actor || null, is_vendor: !!isVendor };
+    const updatePayload = {
+      finding_id: findingId, status: status, message: message, actor: actor || null,
+      is_vendor: !!isVendor, is_no_change: !!isNoChange
+    };
     let { data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select();
     if (updateError && isMissingColumnError(updateError, "actor")) {
       delete updatePayload.actor;
@@ -223,6 +241,10 @@
     }
     if (updateError && isMissingColumnError(updateError, "is_vendor")) {
       delete updatePayload.is_vendor;
+      ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
+    }
+    if (updateError && isMissingColumnError(updateError, "is_no_change")) {
+      delete updatePayload.is_no_change;
       ({ data: updateRows, error: updateError } = await client.from(TABLE_FINDING_UPDATES).insert(updatePayload).select());
     }
     if (updateError) throw updateError;
@@ -240,12 +262,13 @@
 
   // ------------------------------------------------------ password protection
   // Thin wrappers over the 5 RPC functions defined in supabase/schema.sql
-  // (list_protected_user_names / verify_user_password / verify_master_password /
-  // set_user_password / remove_user_password) — an extra deterrent layer on
-  // top of the "attribution, not authentication" identity gate. Passwords are
-  // bcrypt-hashed server-side (see schema.sql) and never leave the database;
-  // these functions only ever return true/false or the set of protected
-  // names, never a hash.
+  // (hvac_aurora_list_protected_user_names / hvac_aurora_verify_user_password /
+  // hvac_aurora_verify_master_password / hvac_aurora_set_user_password /
+  // hvac_aurora_remove_user_password) — an extra deterrent layer on top of
+  // the "attribution, not authentication" identity gate. Passwords are
+  // bcrypt-hashed server-side (see MM_Dashboard's hvac_aurora_tables.sql)
+  // and never leave the database; these functions only ever return
+  // true/false or the set of protected names, never a hash.
   //
   // Same error contract as everything else in this file: every function
   // below returns a Promise that REJECTS on any failure — including the RPC
@@ -258,7 +281,7 @@
     const failure = initFailure();
     if (failure) return failure;
 
-    const { data, error } = await client.rpc("list_protected_user_names");
+    const { data, error } = await client.rpc("hvac_aurora_list_protected_user_names");
     if (error) throw error;
     return data || [];
   }
@@ -267,7 +290,7 @@
     const failure = initFailure();
     if (failure) return failure;
 
-    const { data, error } = await client.rpc("verify_user_password", { p_user_name: userName, p_password: password });
+    const { data, error } = await client.rpc("hvac_aurora_verify_user_password", { p_user_name: userName, p_password: password });
     if (error) throw error;
     return !!data;
   }
@@ -276,7 +299,7 @@
     const failure = initFailure();
     if (failure) return failure;
 
-    const { data, error } = await client.rpc("verify_master_password", { p_password: password });
+    const { data, error } = await client.rpc("hvac_aurora_verify_master_password", { p_password: password });
     if (error) throw error;
     return !!data;
   }
@@ -288,7 +311,7 @@
     const failure = initFailure();
     if (failure) return failure;
 
-    const { data, error } = await client.rpc("set_user_password", {
+    const { data, error } = await client.rpc("hvac_aurora_set_user_password", {
       p_master_password: masterPassword,
       p_user_name: userName,
       p_new_password: newPassword
@@ -301,12 +324,100 @@
     const failure = initFailure();
     if (failure) return failure;
 
-    const { data, error } = await client.rpc("remove_user_password", {
+    const { data, error } = await client.rpc("hvac_aurora_remove_user_password", {
       p_master_password: masterPassword,
       p_user_name: userName
     });
     if (error) throw error;
     return !!data;
+  }
+
+  // ------------------------------------------------------------ shift_reports
+  // Persistence for the End of Shift Report header button (see js/app.js's
+  // shift-report module). One row per submitted report — the checklist
+  // completion tally + its justification + any attached photos. The
+  // findings side of the report is just ordinary finding_updates rows (see
+  // addFindingUpdate's isNoChange param above), not stored here.
+
+  async function createShiftReport(payload) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.from(TABLE_SHIFT_REPORTS).insert(payload).select();
+    if (error) throw error;
+    return data && data[0];
+  }
+
+  // Uploads one already-picked File to the shift-report-photos bucket at
+  // `path` and returns its public URL. Bucket is public (see
+  // supabase/shift_report_photos_storage.sql) so no signed URL is needed —
+  // once the upload succeeds, getPublicUrl is a pure string join, not a
+  // network call.
+  async function uploadShiftReportPhoto(path, file) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { error } = await client.storage.from(SHIFT_REPORT_PHOTOS_BUCKET).upload(path, file, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false
+    });
+    if (error) throw error;
+    return client.storage.from(SHIFT_REPORT_PHOTOS_BUCKET).getPublicUrl(path).data.publicUrl;
+  }
+
+  // ------------------------------------------------ MM Dashboard linked login
+  // For the identity-gate cards that pair to a real MM_Dashboard account (see
+  // MM_DASHBOARD_LINKED_EMAILS in js/app.js) — uses this SAME client/project
+  // (Aurora's tables and MM_Dashboard's real Supabase Auth now live in the
+  // same project) to run the actual signInWithPassword() check MM_Dashboard's
+  // own login.html uses, so a password change there takes effect here with
+  // zero sync step. The real session this creates is used ONLY to verify the
+  // password (and MFA, if enrolled) at the moment of picking an identity —
+  // js/app.js signs it back out immediately after, on both success and
+  // failure, so nothing persists on this shared device. Aurora's own
+  // CURRENT_IDENTITY (memory-only, resets on reload) is what actually tracks
+  // "who's acting now" afterward, exactly as for every other identity.
+  //
+  // Deliberately does NOT fail open on any step — a network hiccup here
+  // denies the sign-in rather than silently letting it through, unlike the
+  // MFA-status checks in MM_Dashboard's own auth.js (which fail open because
+  // they sit on top of an already-passed password check; there is no
+  // "already passed" state to fall back on here).
+
+  async function signInMmDashboardAccount(email, password) {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.auth.signInWithPassword({ email: email, password: password });
+    if (error) throw error;
+    return data;
+  }
+
+  // {factorId} if the just-created session still needs an MFA challenge
+  // (assurance level stuck below what the account's enrolled factor
+  // requires), else null (no MFA enrolled, or already satisfied).
+  async function getMmDashboardPendingMfaChallenge() {
+    const { data: aal, error } = await client.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error || !aal || aal.currentLevel === aal.nextLevel) return null;
+    const { data: factorsData } = await client.auth.mfa.listFactors();
+    const factor = (factorsData && factorsData.totp || []).find(function (f) { return f.status === "verified"; });
+    return factor ? { factorId: factor.id } : null;
+  }
+
+  async function verifyMmDashboardMfaCode(factorId, code) {
+    try {
+      const { data: challenge, error: challengeError } = await client.auth.mfa.challenge({ factorId: factorId });
+      if (challengeError) return false;
+      const { error: verifyError } = await client.auth.mfa.verify({ factorId: factorId, challengeId: challenge.id, code: code });
+      return !verifyError;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Always safe to call, even with no real session active.
+  async function signOutMmDashboardAccount() {
+    try { await client.auth.signOut(); } catch (e) { /* nothing to do */ }
   }
 
   // ---------------------------------------------------------------- bulk load
@@ -340,6 +451,12 @@
     verifyUserPassword: verifyUserPassword,
     verifyMasterPassword: verifyMasterPassword,
     setUserPassword: setUserPassword,
-    removeUserPassword: removeUserPassword
+    removeUserPassword: removeUserPassword,
+    createShiftReport: createShiftReport,
+    uploadShiftReportPhoto: uploadShiftReportPhoto,
+    signInMmDashboardAccount: signInMmDashboardAccount,
+    getMmDashboardPendingMfaChallenge: getMmDashboardPendingMfaChallenge,
+    verifyMmDashboardMfaCode: verifyMmDashboardMfaCode,
+    signOutMmDashboardAccount: signOutMmDashboardAccount
   };
 })();

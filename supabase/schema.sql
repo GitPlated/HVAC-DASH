@@ -1,3 +1,16 @@
+-- SUPERSEDED as of 2026-09-22: this app's backend moved off its own
+-- standalone Supabase project (tlclamhggixfhqhsobgq.supabase.co) onto
+-- MM_Dashboard's shared project, consolidating with Goodyear's own
+-- deployment (MM_Dashboard/hvac-goodyear/) under the same infrastructure.
+-- The live schema (with the hvac_aurora_ prefix js/supabase-client.js now
+-- points at) lives in MM_Dashboard's own repo: hvac_aurora_tables.sql,
+-- hvac_aurora_data_migration.sql (Aurora's real pre-cutover history — 896
+-- checklist_log / 31 findings / 108 finding_updates rows), and
+-- hvac_aurora_shift_report_photos_storage.sql. Kept here only as a record
+-- of the schema's evolution up to the v6 End of Shift Report addition — do
+-- not run this file against the old project or expect it to affect what
+-- the app actually uses anymore.
+--
 -- HVAC-DASH v2 schema: append-only activity log + issue tracking
 --
 -- Replaces the old public.checklist_entries table (which stored a single
@@ -216,3 +229,40 @@ alter table public.findings add column if not exists opened_by text;
 -- no separate "current classification" column to keep in sync, same as every
 -- other "current state" in this app.
 alter table public.finding_updates add column if not exists is_vendor boolean not null default false;
+
+-- v6: End of Shift Report — a header button that auto-generates a table of
+-- every currently-open finding and requires a same-day update on each
+-- (including an explicit "No change" option, tracked here via is_no_change
+-- rather than by pattern-matching the message text, so a consecutive-
+-- no-change streak can be computed reliably), plus a per-shift walkthrough-
+-- checklist completion tally with a required justification, and optional
+-- photos. Each finding's EOS update is a normal finding_updates row (same
+-- table the Findings tab's own "Log an update" form writes to) — there's no
+-- separate join table, since "which updates belong to which shift report"
+-- was never asked for as a feature; the report itself is just a save point
+-- for the checklist tally + photos, plus a batch of ordinary finding
+-- updates. See supabase/shift_report_photos_storage.sql for the photo
+-- upload bucket + policy (Storage is configured separately from this file).
+alter table public.finding_updates add column if not exists is_no_change boolean not null default false;
+
+create table if not exists public.shift_reports (
+  id bigint generated always as identity primary key,
+  actor text not null,
+  shift_date date not null default current_date,
+  checklist_checked_count int not null,
+  checklist_total_count int not null,
+  checklist_justification text not null default '',
+  photos jsonb not null default '[]',  -- [{ url, name, size }, ...]
+  created_at timestamptz not null default now()
+);
+
+create index if not exists shift_reports_created_at on public.shift_reports (created_at desc);
+
+alter table public.shift_reports enable row level security;
+
+drop policy if exists "Allow anon read" on public.shift_reports;
+create policy "Allow anon read" on public.shift_reports for select to anon using (true);
+drop policy if exists "Allow anon insert" on public.shift_reports;
+create policy "Allow anon insert" on public.shift_reports for insert to anon with check (true);
+drop policy if exists "Allow anon delete" on public.shift_reports;
+create policy "Allow anon delete" on public.shift_reports for delete to anon using (true); -- Reset all entries only
