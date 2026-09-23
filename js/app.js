@@ -106,28 +106,41 @@ const CATEGORY_COLORS = {
 // handler itself, so nothing is reachable through devtools DOM tampering
 // either).
 // mmDashboardEmail marks a card as paired to a real, WORKING MM_Dashboard
-// (Supabase Auth) account — confirmed directly with Jacob 2026-09-23 for
-// exactly these 4 (Michael, David, Wilberth, Tyler) after Brett's card
-// locked him out with no fallback: an email merely appearing in FMX or
-// login.html does NOT mean the account is live/usable (Brett Stone had
-// neither a working MM_Dashboard password nor any fallback, and was
-// blocked from picking his own identity entirely). Every other named
-// identity — including Ronald, Brett, Jacolby, and John, none of whom have
-// a confirmed working account — keeps this app's own lightweight per-name
-// password instead (see hvac_aurora_user_passwords / the RPCs in
-// supabase-client.js); Ronald is the only one who currently has one set
-// (confirmed via hvac_aurora_list_protected_user_names 2026-09-23) — Brett,
-// Jacolby, and John have none, same as before any of this session's
-// changes, so their cards are simply unprotected. Clicking a card with
-// mmDashboardEmail opens the real sign-in prompt instead of the lightweight
-// one — see openMmDashboardLoginPrompt below.
+// (Supabase Auth) account. Two different kinds of evidence were used here,
+// and they are NOT equally reliable — this bit us once already (Brett
+// Stone's card locked him out with no fallback, because an FMX/mm_roster
+// listing turned out NOT to mean the account was actually live):
+//   - Michael, David, Wilberth, Tyler: confirmed directly with Jacob
+//     2026-09-23, person by person, after the Brett lockout.
+//   - Ronald and Andrew Wu (2026-09-23): confirmed instead against
+//     MM_Dashboard's own login.html USERS map, which is the actual
+//     credential table doLogin() authenticates against — not FMX, not
+//     mm_roster. Both entries there explicitly say "migrated to a real
+//     Supabase Auth account" (Ronald as "Ron Vogel", ronald.vogel@
+//     factor75.com; Andrew Wu, andrew.wu@hellofresh.com), and Ronald's is
+//     independently corroborated by mm_roster_access_control.sql's own
+//     mm_dashboard_role grant. MM_Dashboard's "Andrew Wu" is itself
+//     documented there as a generic "visitor" demo login (full mm access,
+//     deliberately off every roster) -- the same role Aurora's Andrew Wu
+//     already plays, so gating this sandbox behind that same real
+//     credential (rather than leaving it open to anyone) is a natural fit,
+//     not a mismatch. isSandbox still fakes every write of his regardless
+//     of how he signed in — the two flags are independent.
+// Brett, Jacolby, and John have neither kind of evidence, so they keep
+// this app's own lightweight per-name password instead (see
+// hvac_aurora_user_passwords / the RPCs in supabase-client.js) — none of
+// them currently has one set (hvac_aurora_list_protected_user_names,
+// 2026-09-23), same as before this session touched anything, so their
+// cards are simply unprotected. Clicking a card with mmDashboardEmail opens
+// the real sign-in prompt instead of the lightweight one — see
+// openMmDashboardLoginPrompt below.
 const IDENTITY_OPTIONS = [
   { id: "brett", name: "Brett Stone", themeClass: "identity-theme-brett" },
   { id: "jacolby", name: "Jacolby Moffett", themeClass: "identity-theme-jacolby" },
   { id: "john", name: "John Danhoff", themeClass: "identity-theme-john" },
   { id: "michael", name: "Michael Petersen", themeClass: "identity-theme-michael", mmDashboardEmail: "michael.petersen@factor75.com" },
   { id: "david", name: "David Haney", themeClass: "identity-theme-david", mmDashboardEmail: "david.haney@factor75.com" },
-  { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald" },
+  { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald", mmDashboardEmail: "ronald.vogel@factor75.com" },
   { id: "wilberth", name: "Wilberth Carrizal", themeClass: "identity-theme-wilberth", mmDashboardEmail: "wilberth.carrizal@factor75.com" },
   { id: "tyler", name: "Tyler Christensen", themeClass: "identity-theme-tyler", mmDashboardEmail: "tyler.christensen@factor75.com" },
   // Full write access in the UI (canEdit() below treats him like any other
@@ -135,7 +148,7 @@ const IDENTITY_OPTIONS = [
   // Supabase — see the sandbox guard further down this file, which wraps
   // ChecklistStore's write methods to fabricate a local-only fake response
   // whenever the CURRENT identity is flagged isSandbox.
-  { id: "andrew", name: "Andrew Wu", themeClass: "identity-theme-andrew", isSandbox: true },
+  { id: "andrew", name: "Andrew Wu", themeClass: "identity-theme-andrew", isSandbox: true, mmDashboardEmail: "andrew.wu@hellofresh.com" },
   { id: "admin", name: "Admin", themeClass: null, isAdmin: true }
 ];
 const IDENTITY_BY_ID = {};
