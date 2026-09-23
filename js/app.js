@@ -105,22 +105,29 @@ const CATEGORY_COLORS = {
 // disable at render time AND to early-return inside the click/change
 // handler itself, so nothing is reachable through devtools DOM tampering
 // either).
-// mmDashboardEmail marks a card as paired to a real MM_Dashboard (Supabase
-// Auth) account — confirmed against login.html's own email map and
-// mm_roster's mm_dashboard_role for all 8 names here, Ronald Vogel included
-// (MM_Dashboard lists him as "Ron Vogel", ronald.vogel@factor75.com, role
-// amm — same as his peers; an earlier pass missed this). Every other named
-// identity keeps this app's own lightweight per-name password (see
-// hvac_aurora_user_passwords) completely untouched. Clicking a card with
-// this field opens the real sign-in prompt instead of the lightweight one —
-// see openMmDashboardLoginPrompt below.
+// mmDashboardEmail marks a card as paired to a real, WORKING MM_Dashboard
+// (Supabase Auth) account — confirmed directly with Jacob 2026-09-23 for
+// exactly these 4 (Michael, David, Wilberth, Tyler) after Brett's card
+// locked him out with no fallback: an email merely appearing in FMX or
+// login.html does NOT mean the account is live/usable (Brett Stone had
+// neither a working MM_Dashboard password nor any fallback, and was
+// blocked from picking his own identity entirely). Every other named
+// identity — including Ronald, Brett, Jacolby, and John, none of whom have
+// a confirmed working account — keeps this app's own lightweight per-name
+// password instead (see hvac_aurora_user_passwords / the RPCs in
+// supabase-client.js); Ronald is the only one who currently has one set
+// (confirmed via hvac_aurora_list_protected_user_names 2026-09-23) — Brett,
+// Jacolby, and John have none, same as before any of this session's
+// changes, so their cards are simply unprotected. Clicking a card with
+// mmDashboardEmail opens the real sign-in prompt instead of the lightweight
+// one — see openMmDashboardLoginPrompt below.
 const IDENTITY_OPTIONS = [
-  { id: "brett", name: "Brett Stone", themeClass: "identity-theme-brett", mmDashboardEmail: "brett.stone@factor75.com" },
-  { id: "jacolby", name: "Jacolby Moffett", themeClass: "identity-theme-jacolby", mmDashboardEmail: "jacolby.moffett@factor75.com" },
-  { id: "john", name: "John Danhoff", themeClass: "identity-theme-john", mmDashboardEmail: "john.danhoff@factor75.com" },
+  { id: "brett", name: "Brett Stone", themeClass: "identity-theme-brett" },
+  { id: "jacolby", name: "Jacolby Moffett", themeClass: "identity-theme-jacolby" },
+  { id: "john", name: "John Danhoff", themeClass: "identity-theme-john" },
   { id: "michael", name: "Michael Petersen", themeClass: "identity-theme-michael", mmDashboardEmail: "michael.petersen@factor75.com" },
   { id: "david", name: "David Haney", themeClass: "identity-theme-david", mmDashboardEmail: "david.haney@factor75.com" },
-  { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald", mmDashboardEmail: "ronald.vogel@factor75.com" },
+  { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald" },
   { id: "wilberth", name: "Wilberth Carrizal", themeClass: "identity-theme-wilberth", mmDashboardEmail: "wilberth.carrizal@factor75.com" },
   { id: "tyler", name: "Tyler Christensen", themeClass: "identity-theme-tyler", mmDashboardEmail: "tyler.christensen@factor75.com" },
   // Full write access in the UI (canEdit() below treats him like any other
