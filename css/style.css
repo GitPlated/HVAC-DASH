@@ -586,11 +586,9 @@ select:disabled, input:disabled, textarea:disabled {
   overflow-y: auto;
 }
 
-.manage-users-linked-note {
+.manage-user-row-elsewhere-note {
   font-size: 0.78rem;
   color: var(--ink-muted);
-  line-height: 1.4;
-  padding-top: 4px;
 }
 
 .manage-user-row {

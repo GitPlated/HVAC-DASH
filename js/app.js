@@ -691,23 +691,37 @@ function renderManageUsersList() {
   const list = document.getElementById("manage-users-list");
   if (!list) return;
   list.innerHTML = "";
-  // Anyone with mmDashboardEmail is gated by a live MM_Dashboard sign-in
-  // check that ALWAYS runs first (see wireIdentityGate's card-click
-  // handler) -- a lightweight password set here would never actually be
-  // checked for them, so offering the controls at all is misleading, not
-  // just unnecessary. Shown as a note instead so it's clear why they're
-  // missing rather than looking like they were forgotten.
-  const linked = IDENTITY_OPTIONS.filter(function (o) { return !o.isAdmin && o.mmDashboardEmail; });
-  IDENTITY_OPTIONS.filter(function (o) { return !o.isAdmin && !o.mmDashboardEmail; }).forEach(function (identity) {
-    list.appendChild(buildManageUserRow(identity));
+  IDENTITY_OPTIONS.filter(function (o) { return !o.isAdmin; }).forEach(function (identity) {
+    list.appendChild(identity.mmDashboardEmail ? buildManagedElsewhereRow(identity) : buildManageUserRow(identity));
   });
-  if (linked.length) {
-    const note = document.createElement("div");
-    note.className = "manage-users-linked-note";
-    note.textContent = "Not shown — signed in with their real MM Dashboard password instead, managed there, not here: " +
-      linked.map(function (o) { return o.name; }).join(", ") + ".";
-    list.appendChild(note);
-  }
+}
+
+// Anyone with mmDashboardEmail is gated by a live MM_Dashboard sign-in
+// check that ALWAYS runs first (see wireIdentityGate's card-click handler)
+// -- a lightweight password set here would never actually be checked for
+// them, so this app's own password controls would be misleading, not just
+// unnecessary. Kept in the list at their normal position (rather than
+// pulled into a separate note) so nobody looks missing/forgotten, but with
+// no input or buttons at all -- there's nothing here to disable-and-explain
+// per control when the row does nothing to begin with.
+function buildManagedElsewhereRow(identity) {
+  const row = document.createElement("div");
+  row.className = "manage-user-row";
+
+  const head = document.createElement("div");
+  head.className = "manage-user-row-head";
+  const nameEl = document.createElement("span");
+  nameEl.className = "manage-user-row-name";
+  nameEl.textContent = identity.name;
+  head.appendChild(nameEl);
+  row.appendChild(head);
+
+  const note = document.createElement("div");
+  note.className = "manage-user-row-elsewhere-note";
+  note.textContent = "Managed on MM Dashboard — not editable here.";
+  row.appendChild(note);
+
+  return row;
 }
 
 function buildManageUserRow(identity) {
