@@ -3871,7 +3871,7 @@ function isShiftReportModalOpen() {
 // console-only and never surfaced to the tech (matches the same
 // never-block-on-a-side-effect reasoning as the photo-upload failures a
 // few lines below this call site).
-function postShiftReportToSlack(findings, actor, checked, total, justification) {
+function postShiftReportToSlack(findings, actor, checked, total, justification, photos) {
   // Andrew Wu's sandbox identity must produce zero real, externally-visible
   // effects (see the sandbox guard above) -- a real Slack post is exactly
   // that, so it's skipped here the same way his writes are faked elsewhere.
@@ -3892,7 +3892,10 @@ function postShiftReportToSlack(findings, actor, checked, total, justification) 
     }),
     checklistChecked: checked,
     checklistTotal: total,
-    checklistJustification: justification
+    checklistJustification: justification,
+    // Already-public Supabase Storage URLs (see uploadShiftReportPhoto) --
+    // Slack fetches these directly to render inline images, no auth needed.
+    photos: (photos || []).map(function (p) { return { url: p.url, name: p.name }; })
   };
   fetch("https://mre-dashboard.app/api/post-eos-report-to-slack", {
     method: "POST",
@@ -3964,7 +3967,7 @@ async function submitShiftReport() {
       photos: uploaded
     });
 
-    postShiftReportToSlack(findings, actor, checked, total, justification);
+    postShiftReportToSlack(findings, actor, checked, total, justification, uploaded);
 
     renderFindingsView();
     refreshStatusesUI();
