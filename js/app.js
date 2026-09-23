@@ -106,9 +106,11 @@ const CATEGORY_COLORS = {
 // handler itself, so nothing is reachable through devtools DOM tampering
 // either).
 // mmDashboardEmail marks a card as paired to a real MM_Dashboard (Supabase
-// Auth) account, confirmed live against mm_roster on 2026-09-22 — every
-// other named identity (Ronald Vogel) has no MM_Dashboard login at all and
-// keeps this app's own lightweight per-name password (see
+// Auth) account — confirmed against login.html's own email map and
+// mm_roster's mm_dashboard_role for all 8 names here, Ronald Vogel included
+// (MM_Dashboard lists him as "Ron Vogel", ronald.vogel@factor75.com, role
+// amm — same as his peers; an earlier pass missed this). Every other named
+// identity keeps this app's own lightweight per-name password (see
 // hvac_aurora_user_passwords) completely untouched. Clicking a card with
 // this field opens the real sign-in prompt instead of the lightweight one —
 // see openMmDashboardLoginPrompt below.
@@ -118,7 +120,7 @@ const IDENTITY_OPTIONS = [
   { id: "john", name: "John Danhoff", themeClass: "identity-theme-john", mmDashboardEmail: "john.danhoff@factor75.com" },
   { id: "michael", name: "Michael Petersen", themeClass: "identity-theme-michael", mmDashboardEmail: "michael.petersen@factor75.com" },
   { id: "david", name: "David Haney", themeClass: "identity-theme-david", mmDashboardEmail: "david.haney@factor75.com" },
-  { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald" },
+  { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald", mmDashboardEmail: "ronald.vogel@factor75.com" },
   { id: "wilberth", name: "Wilberth Carrizal", themeClass: "identity-theme-wilberth", mmDashboardEmail: "wilberth.carrizal@factor75.com" },
   { id: "tyler", name: "Tyler Christensen", themeClass: "identity-theme-tyler", mmDashboardEmail: "tyler.christensen@factor75.com" },
   // Full write access in the UI (canEdit() below treats him like any other
