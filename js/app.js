@@ -4213,24 +4213,100 @@ async function renderReportsView() {
   }
   if (seq !== REPORTS_LOAD_SEQ) return;
 
+  REPORTS_CACHE = reports;
+  paintReportsView();
+  highlightPendingReport();
+}
+
+// ---- date filter ----
+// Filters on the local calendar date a report is DISPLAYED under (its
+// created_at, same localDateInputValue convention as the Daily Log) -- not
+// the shift_date column, which Postgres fills in as the server's date and so
+// runs a day ahead of what's shown for an evening report (a 9:16 PM CT
+// report is stored with the next day's shift_date). Filtering on that would
+// disagree with the date printed on the card.
+let REPORTS_CACHE = [];
+
+function getReportsRangeInputs() {
+  return {
+    fromEl: document.getElementById("reports-range-from"),
+    toEl: document.getElementById("reports-range-to")
+  };
+}
+
+function paintReportsView() {
+  const list = document.getElementById("reports-list");
+  const note = document.getElementById("reports-range-note");
+  if (!list) return;
+  const { fromEl, toEl } = getReportsRangeInputs();
+  const from = (fromEl && fromEl.value) || null;
+  const to = (toEl && toEl.value) || null;
+  const filtering = !!(from || to);
+
+  // A report's "previous one by the same author" (which bounds the finding
+  // updates it claims -- see updatesLoggedWithReport) must come from the FULL
+  // list, never the filtered one, or narrowing the dates would change which
+  // updates a report shows. REPORTS_CACHE is newest-first, so that's the next
+  // entry further down with a matching actor.
+  const prevMsById = {};
+  REPORTS_CACHE.forEach(function (r, i) {
+    let prevMs = null;
+    for (let j = i + 1; j < REPORTS_CACHE.length; j++) {
+      if (REPORTS_CACHE[j].actor === r.actor) { prevMs = new Date(REPORTS_CACHE[j].created_at).getTime(); break; }
+    }
+    prevMsById[r.id] = prevMs;
+  });
+
+  const shown = REPORTS_CACHE.filter(function (r) {
+    const d = localDateInputValue(new Date(r.created_at));
+    return (!from || d >= from) && (!to || d <= to);
+  });
+
   list.innerHTML = "";
-  if (!reports.length) {
+  if (note) {
+    note.hidden = !filtering;
+    note.textContent = filtering ? "Showing " + shown.length + " of " + REPORTS_CACHE.length + " reports" : "";
+  }
+  if (!REPORTS_CACHE.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.textContent = "No End of Shift Reports have been submitted yet.";
     list.appendChild(empty);
     return;
   }
-  // reports are newest-first, so a report's previous one by the same author
-  // is the next entry further down with a matching actor.
-  reports.forEach(function (r, i) {
-    let prevMs = null;
-    for (let j = i + 1; j < reports.length; j++) {
-      if (reports[j].actor === r.actor) { prevMs = new Date(reports[j].created_at).getTime(); break; }
-    }
-    list.appendChild(buildReportCard(r, prevMs));
+  if (!shown.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No reports were submitted on the selected date(s).";
+    list.appendChild(empty);
+    return;
+  }
+  shown.forEach(function (r) { list.appendChild(buildReportCard(r, prevMsById[r.id])); });
+}
+
+function wireReportsControls() {
+  const { fromEl, toEl } = getReportsRangeInputs();
+  if (!fromEl || !toEl) return;
+  // Picking just one date shows that single day (the other end follows it);
+  // change either end afterward to widen it into a range.
+  fromEl.addEventListener("change", function () {
+    if (fromEl.value && !toEl.value) toEl.value = fromEl.value;
+    if (fromEl.value && toEl.value && toEl.value < fromEl.value) toEl.value = fromEl.value;
+    paintReportsView();
   });
-  highlightPendingReport();
+  toEl.addEventListener("change", function () {
+    if (toEl.value && !fromEl.value) fromEl.value = toEl.value;
+    if (fromEl.value && toEl.value && fromEl.value > toEl.value) fromEl.value = toEl.value;
+    paintReportsView();
+  });
+  const clearBtn = document.getElementById("reports-range-clear");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", function () {
+      fromEl.value = "";
+      toEl.value = "";
+      paintReportsView();
+    });
+  }
 }
 
 // "#reports" opens the EOS Reports tab; "#reports/<id>" also scrolls to and
@@ -4304,6 +4380,7 @@ async function init() {
   wireLoadBanner();
   wireDailyLogControls();
   wireFindingsControls();
+  wireReportsControls();
   wireOverviewControls();
   wireIdentityGate();
   wireShiftReportModal();

@@ -224,7 +224,15 @@
   </section>
 
   <section class="view-section" id="view-reports">
-    <p class="hint-text">Every submitted End of Shift Report, newest first — the same reports posted to #irt-hellofresh-factor-aurora.</p>
+    <p class="hint-text">Every submitted End of Shift Report, newest first — the same reports posted to #irt-hellofresh-factor-aurora. Pick a date (or a From/To range) to narrow the list.</p>
+    <div class="log-controls reports-controls">
+      <label class="log-date-label" for="reports-range-from">From</label>
+      <input type="date" id="reports-range-from" class="log-date-input">
+      <label class="log-date-label" for="reports-range-to">To</label>
+      <input type="date" id="reports-range-to" class="log-date-input">
+      <button type="button" class="btn" id="reports-range-clear">Show all</button>
+      <span class="overview-range-note" id="reports-range-note" hidden></span>
+    </div>
     <div class="reports-list" id="reports-list"></div>
   </section>
 

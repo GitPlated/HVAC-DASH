@@ -121,7 +121,10 @@ and photos are stored in their own `shift_reports` row. See
 Every submitted report is browsable on the **EOS Reports** tab, newest first:
 the checklist tally and justification, the finding updates logged with it
 (matched by author and time, since updates carry no report id), and its
-photos. The report posted to Slack links straight to it: `#reports` opens
+photos. A From/To date filter narrows the list (pick one date for a single
+day); it filters on the local date shown on each card, not the `shift_date`
+column, which runs a day ahead for evening reports. The report posted to
+Slack links straight to it: `#reports` opens
 the tab, `#reports/<id>` also scrolls to and highlights that one report.
 
 ## Expanding to a new site
