@@ -341,9 +341,9 @@ function isSandboxActor() {
 
   // Shift-report writes fake the same way as everything else above: Andrew
   // sees a normal-looking success (a fake row / fake public URL) and nothing
-  // reaches Supabase. Fake photo URLs are never fetchable, but nothing in
-  // this app dereferences a shift report's own photos after submit (there is
-  // no "browse past reports" view), so that's never actually observed.
+  // reaches Supabase. Fake photo URLs are never fetchable, but a sandbox
+  // report is never shown back either: the EOS Reports tab reads Supabase,
+  // which sandbox writes never reach.
   const realCreateShiftReport = ChecklistStore.createShiftReport;
   ChecklistStore.createShiftReport = function (payload) {
     if (!isSandboxActor()) return realCreateShiftReport.apply(ChecklistStore, arguments);
@@ -3919,7 +3919,7 @@ function isShiftReportModalOpen() {
 // console-only and never surfaced to the tech (matches the same
 // never-block-on-a-side-effect reasoning as the photo-upload failures a
 // few lines below this call site).
-function postShiftReportToSlack(findings, actor, checked, total, justification, photos) {
+function postShiftReportToSlack(findings, actor, checked, total, justification, photos, reportId) {
   // Andrew Wu's sandbox identity must produce zero real, externally-visible
   // effects (see the sandbox guard above) -- a real Slack post is exactly
   // that, so it's skipped here the same way his writes are faked elsewhere.
@@ -3941,6 +3941,9 @@ function postShiftReportToSlack(findings, actor, checked, total, justification, 
     checklistChecked: checked,
     checklistTotal: total,
     checklistJustification: justification,
+    // Lets the Slack card's link open the EOS Reports tab scrolled to this
+    // exact report (#reports/<id>).
+    reportId: reportId,
     // Already-public Supabase Storage URLs (see uploadShiftReportPhoto) --
     // Slack fetches these directly to render inline images, no auth needed.
     photos: (photos || []).map(function (p) { return { url: p.url, name: p.name }; })
@@ -4007,7 +4010,7 @@ async function submitShiftReport() {
       applyFindingResult(result.finding, result.update);
     }
 
-    await ChecklistStore.createShiftReport({
+    const createdReport = await ChecklistStore.createShiftReport({
       actor: actor,
       checklist_checked_count: checked,
       checklist_total_count: total,
@@ -4015,7 +4018,7 @@ async function submitShiftReport() {
       photos: uploaded
     });
 
-    postShiftReportToSlack(findings, actor, checked, total, justification, uploaded);
+    postShiftReportToSlack(findings, actor, checked, total, justification, uploaded, createdReport && createdReport.id);
 
     renderFindingsView();
     refreshStatusesUI();
@@ -4050,8 +4053,197 @@ function wireShiftReportModal() {
   wireShiftReportPhotoDropZone();
 }
 
+// -------------------------------------------------------------- EOS reports tab
+// Every submitted End of Shift Report (hvac_aurora_shift_reports), newest
+// first -- where the Slack post's "View full report" link lands (see
+// api/post-eos-report-to-slack.js in MM_Dashboard). The Slack card is
+// deliberately terse (titles and statuses only); the free-text updates, the
+// checklist justification and the photos are all here. Reloaded from
+// Supabase each time the tab opens, so a report submitted a minute ago shows
+// up without a page refresh.
+
+let REPORTS_LOAD_SEQ = 0;
+let PENDING_REPORT_HIGHLIGHT_ID = null;
+
+// finding_updates rows carry no report id, so the updates "logged with" a
+// report are the ones its author saved in the minutes just before it:
+// submitShiftReport() saves one update per open finding and only then
+// inserts the report row.
+const REPORT_UPDATE_WINDOW_MS = 10 * 60 * 1000;
+
+// prevReportMs is the same author's previous report (or null): this report's
+// window starts after it, so two reports submitted close together don't both
+// claim the same updates.
+function updatesLoggedWithReport(report, prevReportMs) {
+  const end = new Date(report.created_at).getTime();
+  const start = Math.max(end - REPORT_UPDATE_WINDOW_MS, prevReportMs === null ? -Infinity : prevReportMs + 2000);
+  return FINDING_UPDATES_LIST.filter(function (u) {
+    const t = new Date(u.created_at).getTime();
+    return u.actor === report.actor && t >= start && t <= end + 2000;
+  }).sort(function (a, b) {
+    return (new Date(a.created_at) - new Date(b.created_at)) || ((a.id || 0) - (b.id || 0));
+  });
+}
+
+function buildReportCard(report, prevReportMs) {
+  const card = document.createElement("div");
+  card.className = "finding-card report-card";
+  card.dataset.reportId = String(report.id);
+
+  const total = report.checklist_total_count || 0;
+  const checked = report.checklist_checked_count || 0;
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+
+  const head = document.createElement("div");
+  head.className = "finding-card-head";
+  const titleWrap = document.createElement("div");
+  const title = document.createElement("div");
+  title.className = "finding-card-title";
+  title.textContent = new Date(report.created_at).toLocaleString();
+  titleWrap.appendChild(title);
+  const meta = document.createElement("div");
+  meta.className = "finding-card-meta";
+  meta.textContent = "Submitted by " + (report.actor || "Unknown");
+  titleWrap.appendChild(meta);
+  head.appendChild(titleWrap);
+  const badge = document.createElement("div");
+  badge.className = "shift-report-checklist-badge";
+  badge.style.background = shiftReportChecklistTier(pct).color;
+  badge.textContent = checked + " / " + total + " checked (" + pct + "%)";
+  head.appendChild(badge);
+  card.appendChild(head);
+
+  if (report.checklist_justification) {
+    const label = document.createElement("div");
+    label.className = "report-section-label";
+    label.textContent = "Checklist justification";
+    card.appendChild(label);
+    const text = document.createElement("div");
+    text.className = "report-justification";
+    text.textContent = report.checklist_justification;
+    card.appendChild(text);
+  }
+
+  const updates = updatesLoggedWithReport(report, prevReportMs);
+  if (updates.length) {
+    const label = document.createElement("div");
+    label.className = "report-section-label";
+    label.textContent = "Finding updates logged with this report";
+    card.appendChild(label);
+    const ul = document.createElement("ul");
+    ul.className = "report-updates";
+    updates.forEach(function (u) {
+      const finding = FINDINGS_BY_ID[u.finding_id];
+      const cp = finding ? EQUIPMENT_BY_ID[finding.checkpoint_id] : null;
+      const li = document.createElement("li");
+      const line = document.createElement("div");
+      line.className = "report-update-title";
+      line.textContent = (cp ? (cp.equipment + (cp.designation ? " (" + cp.designation + ")" : "")) : "Finding #" + u.finding_id) + " ";
+      line.appendChild(buildFindingStatusBadge(u.status));
+      if (u.is_no_change) line.appendChild(document.createTextNode(" · No change"));
+      li.appendChild(line);
+      if (u.message) {
+        const msg = document.createElement("div");
+        msg.className = "report-update-message";
+        msg.textContent = u.message;
+        li.appendChild(msg);
+      }
+      ul.appendChild(li);
+    });
+    card.appendChild(ul);
+  }
+
+  // Only https URLs become links -- the photos column is anon-writable, so a
+  // stored value is never trusted as an href without checking its scheme.
+  const photos = (Array.isArray(report.photos) ? report.photos : []).filter(function (p) {
+    return p && typeof p.url === "string" && /^https:\/\//i.test(p.url);
+  });
+  if (photos.length) {
+    const label = document.createElement("div");
+    label.className = "report-section-label";
+    label.textContent = "Photos (" + photos.length + ")";
+    card.appendChild(label);
+    const grid = document.createElement("div");
+    grid.className = "report-photos";
+    photos.forEach(function (p) {
+      const a = document.createElement("a");
+      a.href = p.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      const img = document.createElement("img");
+      img.src = p.url;
+      img.alt = p.name || "Shift report photo";
+      img.loading = "lazy";
+      a.appendChild(img);
+      grid.appendChild(a);
+    });
+    card.appendChild(grid);
+  }
+
+  return card;
+}
+
+function highlightPendingReport() {
+  if (PENDING_REPORT_HIGHLIGHT_ID === null) return;
+  const el = document.querySelector('.report-card[data-report-id="' + PENDING_REPORT_HIGHLIGHT_ID + '"]');
+  PENDING_REPORT_HIGHLIGHT_ID = null;
+  if (!el) return;
+  el.classList.add("is-highlighted");
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function renderReportsView() {
+  const list = document.getElementById("reports-list");
+  if (!list) return;
+  const seq = ++REPORTS_LOAD_SEQ;
+  list.innerHTML = "";
+  const loading = document.createElement("div");
+  loading.className = "empty-state";
+  loading.textContent = "Loading reports…";
+  list.appendChild(loading);
+
+  let reports;
+  try {
+    reports = await ChecklistStore.loadShiftReports();
+  } catch (err) {
+    console.error("ChecklistStore.loadShiftReports failed:", err);
+    if (seq !== REPORTS_LOAD_SEQ) return;
+    loading.textContent = "Couldn't load reports — check your connection and try again.";
+    return;
+  }
+  if (seq !== REPORTS_LOAD_SEQ) return;
+
+  list.innerHTML = "";
+  if (!reports.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No End of Shift Reports have been submitted yet.";
+    list.appendChild(empty);
+    return;
+  }
+  // reports are newest-first, so a report's previous one by the same author
+  // is the next entry further down with a matching actor.
+  reports.forEach(function (r, i) {
+    let prevMs = null;
+    for (let j = i + 1; j < reports.length; j++) {
+      if (reports[j].actor === r.actor) { prevMs = new Date(reports[j].created_at).getTime(); break; }
+    }
+    list.appendChild(buildReportCard(r, prevMs));
+  });
+  highlightPendingReport();
+}
+
+// "#reports" opens the EOS Reports tab; "#reports/<id>" also scrolls to and
+// highlights that one report. This is the link the Slack post carries.
+function applyHashRoute() {
+  const m = /^#reports(?:\/(\d+))?$/.exec(location.hash);
+  if (!m) return;
+  PENDING_REPORT_HIGHLIGHT_ID = m[1] ? Number(m[1]) : null;
+  switchTab("reports");
+}
+
 // -------------------------------------------------------------- header / tabs
-const TAB_IDS = ["floor", "roof", "log", "findings", "overview"];
+const TAB_IDS = ["floor", "roof", "log", "findings", "reports", "overview"];
 
 function switchTab(which) {
   TAB_IDS.forEach(function (id) {
@@ -4062,7 +4254,13 @@ function switchTab(which) {
   });
   if (which === "log") renderDailyLogView();
   if (which === "findings") renderFindingsView();
+  if (which === "reports") renderReportsView();
   if (which === "overview") renderOverviewView();
+
+  // Keep the address bar shareable for the one tab that has a deep link.
+  const onReportsHash = /^#reports/.test(location.hash);
+  if (which === "reports" && !onReportsHash) history.replaceState(null, "", "#reports");
+  else if (which !== "reports" && onReportsHash) history.replaceState(null, "", location.pathname + location.search);
 }
 
 function wireHeaderControls() {
@@ -4151,6 +4349,10 @@ async function init() {
     renderDailyLogView();
     renderFindingsView();
     renderOverviewView();
+    // After the initial data load (not before) so the Reports tab's finding
+    // updates are populated when a Slack link lands straight on it.
+    applyHashRoute();
+    window.addEventListener("hashchange", applyHashRoute);
   }
 }
 

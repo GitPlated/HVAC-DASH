@@ -348,6 +348,18 @@
     return data && data[0];
   }
 
+  // Every submitted report, newest first -- backs the EOS Reports tab (see
+  // renderReportsView in js/app.js) and the "View full report" deep link in
+  // the Slack post.
+  async function loadShiftReports() {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    const { data, error } = await client.from(TABLE_SHIFT_REPORTS).select("*").order("created_at", { ascending: false });
+    if (error) throw error;
+    return data || [];
+  }
+
   // Uploads one already-picked File to the shift-report-photos bucket at
   // `path` and returns its public URL. Bucket is public (see
   // supabase/shift_report_photos_storage.sql) so no signed URL is needed —
@@ -453,6 +465,7 @@
     setUserPassword: setUserPassword,
     removeUserPassword: removeUserPassword,
     createShiftReport: createShiftReport,
+    loadShiftReports: loadShiftReports,
     uploadShiftReportPhoto: uploadShiftReportPhoto,
     signInMmDashboardAccount: signInMmDashboardAccount,
     getMmDashboardPendingMfaChallenge: getMmDashboardPendingMfaChallenge,

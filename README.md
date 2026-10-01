@@ -118,6 +118,12 @@ the Findings tab's own "Log an update" form writes to); the checklist tally
 and photos are stored in their own `shift_reports` row. See
 `supabase/schema.sql`'s "v6" block and `supabase/shift_report_photos_storage.sql`.
 
+Every submitted report is browsable on the **EOS Reports** tab, newest first:
+the checklist tally and justification, the finding updates logged with it
+(matched by author and time, since updates carry no report id), and its
+photos. The report posted to Slack links straight to it: `#reports` opens
+the tab, `#reports/<id>` also scrolls to and highlights that one report.
+
 ## Expanding to a new site
 
 [`onboarding.html`](onboarding.html) is a self-contained requirements doc for

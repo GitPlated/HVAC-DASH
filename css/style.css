@@ -2048,6 +2048,78 @@ button.finding-indicator {
   color: #ffffff;
 }
 
+/* ------------------------------------------------------------ EOS reports tab */
+.reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 720px;
+}
+
+.report-card {
+  scroll-margin-top: 80px;
+}
+
+.report-card.is-highlighted {
+  outline: 2px solid var(--status-warning);
+  outline-offset: 2px;
+}
+
+.report-section-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-top: 4px;
+}
+
+.report-justification {
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+.report-updates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.report-update-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.report-update-message {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  white-space: pre-wrap;
+}
+
+.report-photos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.report-photos a {
+  display: block;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  aspect-ratio: 1;
+}
+
+.report-photos img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 /* ------------------------------------------------------------ photo upload */
 .photo-drop-zone {
   border: 2px dashed var(--border);
