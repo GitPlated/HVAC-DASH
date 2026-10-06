@@ -94,10 +94,11 @@
    identity-theme-jacolby/john values below) so a quick glance at "who's
    acting" is never confused with a critical-finding or OK status color.
 
-   The 5 identities below (michael/david/ronald/wilberth/tyler) were added
-   later and picked the same way, plus an explicit pairwise pass: computed
+   The identities below (michael/david/ronald/wilberth, plus tyler, whose
+   card has since been removed) were added later and picked the same way,
+   plus an explicit pairwise pass: computed
    RGB Euclidean distance AND hue-angle separation between every one of the
-   (now 8) identity accents, AND against --status-good / --status-critical,
+   (then 8, now 7 -- dropping one only removes pairs) identity accents, AND against --status-good / --status-critical,
    in both color schemes. Target was "clearly above" the distance/hue a
    prior (rejected) violet measured against Brett's blue when a real user
    complained it looked too similar (~84-87 RGB distance, ~34-36deg hue) —
@@ -128,10 +129,9 @@
 .identity-theme-david   { --identity-accent: #a664d8; --identity-wash: rgba(166, 100, 216, 0.10); }
 .identity-theme-ronald  { --identity-accent: #f55a00; --identity-wash: rgba(245, 90, 0, 0.10); }
 .identity-theme-wilberth{ --identity-accent: #0ac2c2; --identity-wash: rgba(10, 194, 194, 0.10); }
-.identity-theme-tyler   { --identity-accent: #e619c3; --identity-wash: rgba(230, 25, 195, 0.10); }
 /* Andrew Wu — the sandbox identity (see IDENTITY_OPTIONS/isSandboxActor in
    js/app.js). Deliberately a muted indigo/slate-blue rather than a fully
-   vivid hue like the 8 real-technician accents above: it sits in the widest
+   vivid hue like the real-technician accents above: it sits in the widest
    open gap on the wheel (between Brett's blue and David's purple) so it's
    still clearly its own color, but the lower saturation is itself a quiet
    visual cue that this identity behaves differently. */
@@ -145,7 +145,6 @@
   .identity-theme-david   { --identity-accent: #4d206f; --identity-wash: rgba(77, 32, 111, 0.07); }
   .identity-theme-ronald  { --identity-accent: #913608; --identity-wash: rgba(145, 54, 8, 0.07); }
   .identity-theme-wilberth{ --identity-accent: #084949; --identity-wash: rgba(8, 73, 73, 0.07); }
-  .identity-theme-tyler   { --identity-accent: #c115a4; --identity-wash: rgba(193, 21, 164, 0.07); }
   .identity-theme-andrew  { --identity-accent: #4a5aa8; --identity-wash: rgba(74, 90, 168, 0.07); }
 }
 

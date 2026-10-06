@@ -110,8 +110,11 @@ const CATEGORY_COLORS = {
 // and they are NOT equally reliable — this bit us once already (Brett
 // Stone's card locked him out with no fallback, because an FMX/mm_roster
 // listing turned out NOT to mean the account was actually live):
-//   - Michael, David, Wilberth, Tyler: confirmed directly with Jacob
-//     2026-09-23, person by person, after the Brett lockout.
+//   - Michael, David, Wilberth: confirmed directly with Jacob
+//     2026-09-23, person by person, after the Brett lockout. (Tyler
+//     Christensen was confirmed the same way; his card was removed
+//     2026-10-06, ahead of his 2026-10-07 last day -- his real sign-in is
+//     what opened it, so leaving it would have left a live card behind.)
 //   - Ronald and Andrew Wu (2026-09-23): confirmed instead against
 //     MM_Dashboard's own login.html USERS map, which is the actual
 //     credential table doLogin() authenticates against — not FMX, not
@@ -142,7 +145,6 @@ const IDENTITY_OPTIONS = [
   { id: "david", name: "David Haney", themeClass: "identity-theme-david", mmDashboardEmail: "david.haney@factor75.com" },
   { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald", mmDashboardEmail: "ronald.vogel@factor75.com" },
   { id: "wilberth", name: "Wilberth Carrizal", themeClass: "identity-theme-wilberth", mmDashboardEmail: "wilberth.carrizal@factor75.com" },
-  { id: "tyler", name: "Tyler Christensen", themeClass: "identity-theme-tyler", mmDashboardEmail: "tyler.christensen@factor75.com" },
   // Full write access in the UI (canEdit() below treats him like any other
   // named identity), but every write is intercepted before it reaches
   // Supabase — see the sandbox guard further down this file, which wraps

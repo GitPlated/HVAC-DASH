@@ -69,7 +69,7 @@ update history.
 
 On every page load, a gate asks who's using the dashboard: **Brett Stone**,
 **Jacolby Moffett**, **John Danhoff**, **Michael Petersen**, **David Haney**,
-**Ronald Vogel**, **Wilberth Carrizal**, **Tyler Christensen** (each with
+**Ronald Vogel**, **Wilberth Carrizal** (each with
 their own accent color theme, applied to the header/tabs/buttons while
 they're active), or **Admin** (view-only — every edit control is hidden).
 It resets every time the page loads — nobody inherits the last person's
