@@ -90,6 +90,23 @@ not full authentication: there's no login-attempt throttling, so it won't
 stop someone determined to script repeated guesses against it. Reasonable
 for a small trusted team; know that limit going in.
 
+The four cards that sign in with a real MM Dashboard account (Michael,
+David, Ronald, Wilberth) also get a roster check: right after the password
+passes, and before any MFA prompt, the page asks the database whether that
+account's email is still on an **active** `mm_roster` row. A departed
+person's MM Dashboard password otherwise keeps working here (Sync Login
+Access clears their role but never disables the account). Only a definite
+"no" blocks the card; if the check can't run (network error, odd response,
+or the migration not run yet) the sign-in goes ahead and a warning is logged
+to the console, so the shop floor is never locked out by an outage or a
+deploy-order slip. Andrew Wu's sandbox account is exempt because it is
+deliberately kept off the roster. Unlike `supabase/schema.sql`,
+[`supabase/2026-10-07_hvac_aurora_roster_active_check.sql`](supabase/2026-10-07_hvac_aurora_roster_active_check.sql)
+is **not** a historical record: it is a live migration that has to be run by
+hand in MM_Dashboard's Supabase project (preflight query first; the same file
+has the one-line `drop function` that turns the check back off). Brett,
+Jacolby and John, and Goodyear's cards, are not tied to the roster.
+
 ## End of Shift Report
 
 A button in the header, between the title and "Acting as," opens a form

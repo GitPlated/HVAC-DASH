@@ -23,7 +23,8 @@
  * table (e.g. the new schema hasn't been applied to the project yet), RLS
  * misconfiguration, or supabase-js itself failing to load. There is no
  * "error object" return shape; callers should use try/catch or .catch().
- * Nothing here throws synchronously.
+ * Nothing here throws synchronously. (One deliberate exception:
+ * checkMmDashboardRosterActive never rejects — see its own comment.)
  */
 
 (function () {
@@ -390,11 +391,18 @@
   // CURRENT_IDENTITY (memory-only, resets on reload) is what actually tracks
   // "who's acting now" afterward, exactly as for every other identity.
   //
-  // Deliberately does NOT fail open on any step — a network hiccup here
-  // denies the sign-in rather than silently letting it through, unlike the
-  // MFA-status checks in MM_Dashboard's own auth.js (which fail open because
-  // they sit on top of an already-passed password check; there is no
-  // "already passed" state to fall back on here).
+  // The password check (and MFA) deliberately does NOT fail open on any step —
+  // a network hiccup there denies the sign-in rather than silently letting it
+  // through, unlike the MFA-status checks in MM_Dashboard's own auth.js (which
+  // fail open because they sit on top of an already-passed password check;
+  // there is no "already passed" state to fall back on here).
+  //
+  // checkMmDashboardRosterActive below is the one step that DOES fail open, and
+  // that is not a contradiction: it runs only after the password has already
+  // passed, as a revocation layer on top (a departed person's Auth password
+  // still works after their roster row is gone). A definite "no" from the
+  // server blocks; an outage, a malformed answer, or the migration simply not
+  // being run yet must never lock the shop floor out of its own checklist.
 
   async function signInMmDashboardAccount(email, password) {
     const failure = initFailure();
@@ -403,6 +411,42 @@
     const { data, error } = await client.auth.signInWithPassword({ email: email, password: password });
     if (error) throw error;
     return data;
+  }
+
+  // RPC not deployed yet (supabase/2026-10-07_hvac_aurora_roster_active_check.sql
+  // not run) — PostgREST says PGRST202 (or 42883 straight from Postgres), and
+  // a gateway in front of it may answer a bare 404 with no code at all.
+  function isMissingFunctionError(error, status) {
+    if (status === 404) return true;
+    if (!error) return false;
+    if (error.status === 404 || error.code === "PGRST202" || error.code === "42883") return true;
+    const haystack = [error.message, error.details, error.hint].filter(Boolean).join(" ");
+    return /could not find the function/i.test(haystack);
+  }
+
+  // Asks the server whether the account that JUST signed in (this client's
+  // current session) is still an ACTIVE row on the network roster. Takes no
+  // argument on purpose: the RPC reads only the caller's own JWT email, so
+  // there is nothing here to point at someone else.
+  //
+  // Contract: resolves false ONLY when the server answers a literal boolean
+  // false. Everything else resolves true (active) or null ("couldn't tell":
+  // RPC missing, lookup error, malformed answer) and never rejects — the
+  // caller blocks on === false and proceeds on anything else.
+  async function checkMmDashboardRosterActive() {
+    try {
+      const { data, error, status } = await client.rpc("hvac_aurora_caller_is_active_on_roster");
+      if (error) {
+        console.warn("Roster check skipped (" + (isMissingFunctionError(error, status) ? "RPC not deployed yet" : "lookup failed") + "):", error);
+        return null;
+      }
+      if (data === true || data === false) return data;
+      console.warn("Roster check skipped (unexpected response):", data);
+      return null;
+    } catch (e) {
+      console.warn("Roster check skipped (lookup failed):", e);
+      return null;
+    }
   }
 
   // {factorId} if the just-created session still needs an MFA challenge
@@ -468,6 +512,7 @@
     loadShiftReports: loadShiftReports,
     uploadShiftReportPhoto: uploadShiftReportPhoto,
     signInMmDashboardAccount: signInMmDashboardAccount,
+    checkMmDashboardRosterActive: checkMmDashboardRosterActive,
     getMmDashboardPendingMfaChallenge: getMmDashboardPendingMfaChallenge,
     verifyMmDashboardMfaCode: verifyMmDashboardMfaCode,
     signOutMmDashboardAccount: signOutMmDashboardAccount

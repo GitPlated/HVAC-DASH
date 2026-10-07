@@ -506,6 +506,20 @@ function submitIdentityPassword() {
 let gateMmLoginPendingId = null;
 let gateMmLoginFactorId = null; // set once the password step succeeds and a pending MFA challenge is found
 
+// After the password check passes, submitMmDashboardLogin also asks the server
+// whether that account is still an ACTIVE row on the network roster (see
+// ChecklistStore.checkMmDashboardRosterActive and
+// supabase/2026-10-07_hvac_aurora_roster_active_check.sql) — a departed
+// person's Auth password otherwise keeps working here. Accounts listed below
+// skip that check: Andrew Wu's is a real Auth account kept off mm_roster ON
+// PURPOSE (MM_Dashboard's supabase_auth_app_metadata_backfill.ps1,
+// $PermanentlyExcludedEmails), so "no active row" would lock him out.
+const ROSTER_CHECK_EXEMPT_EMAILS = ["andrew.wu@hellofresh.com"];
+
+function rosterCheckApplies(email) {
+  return ROSTER_CHECK_EXEMPT_EMAILS.indexOf(String(email || "").trim().toLowerCase()) === -1;
+}
+
 function openMmDashboardLoginPrompt(identity) {
   closeIdentityPasswordPrompt();
   closeManagePanel();
@@ -568,6 +582,19 @@ function submitMmDashboardLogin() {
 
   ChecklistStore.signInMmDashboardAccount(identity.mmDashboardEmail, typed)
     .then(function () {
+      // Before identity or the MFA step, so both grant paths below are covered
+      // by this one check and a blocked person is never shown the MFA prompt.
+      // Never rejects; resolves false ONLY on a definite "not on the roster" —
+      // an outage or the migration not being run yet comes back null and the
+      // sign-in simply proceeds (see the module comment in supabase-client.js).
+      return rosterCheckApplies(identity.mmDashboardEmail) ? ChecklistStore.checkMmDashboardRosterActive() : null;
+    })
+    .then(function (rosterActive) {
+      if (rosterActive === false) {
+        const blocked = new Error("MM Dashboard account is not active on the network roster");
+        blocked.rosterInactive = true;
+        throw blocked;
+      }
       return ChecklistStore.getMmDashboardPendingMfaChallenge();
     })
     .then(function (pending) {
@@ -589,6 +616,17 @@ function submitMmDashboardLogin() {
       });
     })
     .catch(function (e) {
+      if (e && e.rosterInactive) {
+        // Unlike a bad password, a real session exists here — drop it, and
+        // never reach selectIdentity.
+        console.warn("MM Dashboard sign-in blocked, no active roster row:", identity.name);
+        const signedOut = ChecklistStore.signOutMmDashboardAccount();
+        if (submitBtn) submitBtn.disabled = false;
+        err.textContent = "Your account is no longer active on the network roster — ask your manager if that is a mistake.";
+        err.hidden = false;
+        input.value = "";
+        return signedOut;
+      }
       console.error("MM Dashboard sign-in failed:", identity.name, e);
       if (submitBtn) submitBtn.disabled = false;
       err.textContent = "Incorrect password. Try again.";
