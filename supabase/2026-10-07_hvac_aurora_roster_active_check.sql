@@ -24,21 +24,31 @@
 -- email, so it cannot be used to probe whether anybody else is on the roster
 -- (same `auth.jwt() ->> 'email'` precedent as mm_roster_eos_delegate_read.sql).
 --
--- RULE (matches Sync Login Access): an account counts as active while ANY
--- ACTIVE mm_roster row, at any site, carries its lower-cased email. mm_roster
--- has no email uniqueness (a transferred person can have several rows).
---   true  = an active row carries the email
---   false = none does (row deleted, active = false, or the email moved)
+-- RULE (the same criterion Sync Login Access uses to decide who keeps access:
+-- MM_Dashboard api/sync-app-metadata.js reads mm_roster rows with active = true
+-- AND a non-null mm_dashboard_role): an account counts as active while ANY
+-- mm_roster row, at any site, carries its lower-cased email, is active, AND has
+-- an MM Dashboard Role. The role matters because clearing it in Network Roster
+-- > Edit is how a manager removes someone's access WITHOUT deleting or
+-- deactivating the row (the Adam Peterson case Sync's own header describes);
+-- an active but role-less row does not count. mm_roster has no email
+-- uniqueness (a transferred person can have several rows). The email compare is
+-- lower(btrim()) on both sides -- a touch looser than Sync's lower() -- so it
+-- can only ever mean fewer false denials, never more.
+--   true  = an active row with a role carries the email
+--   false = none does (row deleted, active = false, role cleared, or the email
+--           moved)
 --   null  = the JWT carries no email, so we cannot tell (the client treats
 --           null like any other non-answer and lets the sign-in proceed)
 --
 -- HOW THE CLIENT USES IT (js/app.js submitMmDashboardLogin): only a LITERAL
--- false blocks. A missing function (this file not run yet), a network error or
--- a malformed answer all proceed with a console warning, so deploy order can
--- never lock the shop floor out. andrew.wu@hellofresh.com is exempted in the
--- client on purpose: a real Auth account deliberately kept OFF mm_roster
--- (see $PermanentlyExcludedEmails in MM_Dashboard's
--- supabase_auth_app_metadata_backfill.ps1), so this rule would lock him out.
+-- false blocks. A missing function (this file not run yet), a network error, a
+-- stall (the client gives up after 5 s) or a malformed answer all proceed with
+-- a console warning, so deploy order can never lock the shop floor out.
+-- andrew.wu@hellofresh.com is exempted in the client on purpose: a real Auth
+-- account deliberately kept OFF mm_roster (see $PermanentlyExcludedEmails in
+-- MM_Dashboard's supabase_auth_app_metadata_backfill.ps1), so this rule would
+-- lock him out.
 --
 -- RUN ORDER:  1) STEP 1 (read-only)   2) STEP 2 (the switch)   3) VERIFY.
 -- ============================================================================
@@ -46,18 +56,37 @@
 
 -- ============================================================================
 -- STEP 1 -- LOCK-OUT PREFLIGHT (read-only, run this FIRST)
--- Expect exactly 4 rows, all with active = true -- one per card that signs in
--- with a real MM_Dashboard account (Andrew Wu is exempt, so he is not listed).
--- If anyone is missing or inactive, fix THEIR roster row (the email) BEFORE
--- running STEP 2, or that person is blocked the moment STEP 2 is live. Match
--- is on email, never name (the roster says "Ron Vogel", the card says
--- "Ronald Vogel"). A person with several rows (a transfer) shows several rows;
--- one active row is enough.
+-- One row per card that signs in with a real MM_Dashboard account (Andrew Wu is
+-- exempt, so he is not listed). would_pass applies the SAME rule as the
+-- function below, so it is exactly what STEP 2 will answer for that person.
+--
+-- Expect exactly 4 rows, ALL with would_pass = true.
+-- A would_pass = false row is someone who is blocked the moment STEP 2 commits
+-- (their card refuses them, with no fallback). Fix the cause BEFORE STEP 2:
+--   roster_rows = 0  -> no roster row carries that email (blank or different
+--                       email on their row). Correct the row's email.
+--   a row shows active=false -> reactivate it if that is a mistake.
+--   a row shows role=NULL    -> their MM Dashboard Role was cleared. Sync Login
+--                       Access has already revoked their dashboard login, so
+--                       blocking them here is intended; if it is NOT, set the
+--                       role back in Network Roster > Edit first.
+-- Match is on email, never name (the roster says "Ron Vogel", the card says
+-- "Ronald Vogel"). A person with several rows (a transfer) shows all of them;
+-- one active row with a role is enough.
 -- ============================================================================
-select r.site, r.name, r.email, r.active
-from mm_roster r
-where lower(btrim(r.email)) in ('michael.petersen@factor75.com', 'david.haney@factor75.com',
-                                'ronald.vogel@factor75.com', 'wilberth.carrizal@factor75.com');
+select e.email,
+       coalesce(bool_or(r.active and r.mm_dashboard_role is not null), false) as would_pass,
+       count(r.email) as roster_rows,
+       string_agg(format('%s / %s [active=%s, role=%s]', r.site, r.name, r.active::text,
+                         coalesce(r.mm_dashboard_role, 'NULL')),
+                  ' | ' order by r.site, r.name) as matching_rows
+from (values ('michael.petersen@factor75.com'),
+             ('david.haney@factor75.com'),
+             ('ronald.vogel@factor75.com'),
+             ('wilberth.carrizal@factor75.com')) as e(email)
+left join public.mm_roster r on lower(btrim(r.email)) = e.email
+group by e.email
+order by e.email;
 
 
 -- ============================================================================
@@ -75,6 +104,7 @@ as $$
     when nullif(lower(btrim(auth.jwt() ->> 'email')), '') is null then null   -- cannot tell
     else exists (select 1 from public.mm_roster r
                  where r.active
+                   and r.mm_dashboard_role is not null
                    and lower(btrim(r.email)) = lower(btrim(auth.jwt() ->> 'email')))
   end;
 $$;
@@ -95,6 +125,9 @@ grant execute on function public.hvac_aurora_caller_is_active_on_roster() to aut
 
 -- ============================================================================
 -- VERIFY AFTER RUNNING STEP 2
+-- Everything here is read-only: nothing changes mm_roster, so nothing another
+-- app reads live (PM-AUDITS caches the roster for 5 minutes; the booked-labor
+-- cron reads it too) is ever disturbed. Run each query on its own.
 -- ============================================================================
 -- select proname, prosecdef, proconfig
 -- from pg_proc
@@ -107,9 +140,24 @@ grant execute on function public.hvac_aurora_caller_is_active_on_roster() to aut
 --          'public.hvac_aurora_caller_is_active_on_roster()', 'execute') as authed_can;
 --   -- anon_can = false, authed_can = true.
 --
+-- The function's real answers, WITHOUT touching a roster row: each row below
+-- impersonates one email by setting the JWT claim for this one statement only
+-- (set_config's third argument, true, makes it transaction-local), then calls
+-- the function the way the app does.
+-- select t.email,
+--        (select public.hvac_aurora_caller_is_active_on_roster()
+--           from (select set_config('request.jwt.claims',
+--                                   json_build_object('email', t.email)::text, true)) as s) as answer
+-- from (values ('michael.petersen@factor75.com'), ('david.haney@factor75.com'),
+--              ('ronald.vogel@factor75.com'), ('wilberth.carrizal@factor75.com'),
+--              ('nobody.at.all@factor75.com'), ('')) as t(email);
+--   -- the four leaders = true, the made-up address = false, the blank one = null.
+--
 -- In the app: pick Michael Petersen (or David / Ronald / Wilberth), enter the
--- MM Dashboard password -> the card opens as before. To see a block, run in
--- the SQL editor:  update mm_roster set active = false where email = '...';
--- try the card (expect "no longer active on the network roster"), then set
--- active = true again. Andrew Wu's card must keep working throughout.
+-- MM Dashboard password -> the card opens as before (MFA prompt first if the
+-- account has one). Andrew Wu's card must keep working. Do NOT deactivate a
+-- real leader's roster row just to watch the "no longer active" refusal: the
+-- query above already proves the function's answer for every case, and a
+-- blanket UPDATE ... WHERE email = ... would also flip any older inactive row
+-- that shares the email (mm_roster has no email uniqueness).
 -- ============================================================================
