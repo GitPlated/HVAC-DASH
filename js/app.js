@@ -506,6 +506,14 @@ function submitIdentityPassword() {
 let gateMmLoginPendingId = null;
 let gateMmLoginFactorId = null; // set once the password step succeeds and a pending MFA challenge is found
 
+// Identifies the ONE password-step sign-in that is still live. Bumped when the
+// prompt it belongs to opens or closes (Cancel, another card, Switch) and by
+// every new submit, so a sign-in still in flight when any of that happens can
+// tell it was superseded: it must not grant an identity, skip or show the MFA
+// step, or write its verdict onto whichever card's prompt is open by then. The
+// roster check turned that window from microtasks into a network round trip.
+let gateMmLoginAttempt = 0;
+
 // After the password check passes, submitMmDashboardLogin also asks the server
 // whether that account is still an ACTIVE row on the network roster (see
 // ChecklistStore.checkMmDashboardRosterActive and
@@ -523,6 +531,7 @@ function rosterCheckApplies(email) {
 function openMmDashboardLoginPrompt(identity) {
   closeIdentityPasswordPrompt();
   closeManagePanel();
+  gateMmLoginAttempt++; // a sign-in still running for the previous card is now stale
   gateMmLoginPendingId = identity.id;
   gateMmLoginFactorId = null;
   const prompt = document.getElementById("identity-mm-login-prompt");
@@ -547,6 +556,7 @@ function openMmDashboardLoginPrompt(identity) {
 // shared device.
 function closeMmDashboardLoginPrompt() {
   const hadPending = !!gateMmLoginPendingId;
+  gateMmLoginAttempt++; // Cancel must really cancel a sign-in that is still in flight
   gateMmLoginPendingId = null;
   gateMmLoginFactorId = null;
   const prompt = document.getElementById("identity-mm-login-prompt");
@@ -580,16 +590,31 @@ function submitMmDashboardLogin() {
   err.hidden = true;
   if (submitBtn) submitBtn.disabled = true;
 
+  // Every async step below re-checks this before it acts (see gateMmLoginAttempt).
+  const attempt = ++gateMmLoginAttempt;
+  const isLive = function () { return attempt === gateMmLoginAttempt; };
+  const supersededError = function () {
+    const e = new Error("MM Dashboard sign-in superseded (cancelled or another card picked)");
+    e.superseded = true;
+    return e;
+  };
+
   ChecklistStore.signInMmDashboardAccount(identity.mmDashboardEmail, typed)
     .then(function () {
+      if (!isLive()) throw supersededError();
       // Before identity or the MFA step, so both grant paths below are covered
       // by this one check and a blocked person is never shown the MFA prompt.
       // Never rejects; resolves false ONLY on a definite "not on the roster" —
-      // an outage or the migration not being run yet comes back null and the
-      // sign-in simply proceeds (see the module comment in supabase-client.js).
+      // an outage, a stall (it gives up after a few seconds) or the migration
+      // not being run yet comes back null and the sign-in simply proceeds (see
+      // the module comment in supabase-client.js).
       return rosterCheckApplies(identity.mmDashboardEmail) ? ChecklistStore.checkMmDashboardRosterActive() : null;
     })
     .then(function (rosterActive) {
+      // Cancel signs the session out, which would make the MFA lookup below read
+      // "no MFA needed" and grant the card with no TOTP step: never continue a
+      // sign-in that was cancelled while the roster answer was in flight.
+      if (!isLive()) throw supersededError();
       if (rosterActive === false) {
         const blocked = new Error("MM Dashboard account is not active on the network roster");
         blocked.rosterInactive = true;
@@ -598,6 +623,7 @@ function submitMmDashboardLogin() {
       return ChecklistStore.getMmDashboardPendingMfaChallenge();
     })
     .then(function (pending) {
+      if (!isLive()) throw supersededError();
       if (submitBtn) submitBtn.disabled = false;
       if (pending) {
         gateMmLoginFactorId = pending.factorId;
@@ -610,12 +636,20 @@ function submitMmDashboardLogin() {
       // the real session (see the module comment above) before finishing
       // the normal identity-select flow.
       ChecklistStore.signOutMmDashboardAccount().then(function () {
+        if (!isLive()) return; // cancelled during the sign-out round trip
         gateMmLoginPendingId = null;
         closeMmDashboardLoginPrompt();
         selectIdentity(identity.id);
       });
     })
     .catch(function (e) {
+      if (!isLive()) {
+        // Superseded: stay silent — the prompt on screen (if any) belongs to a
+        // different attempt now. Cancel signs out BEFORE a late sign-in lands,
+        // so drop any session it created since, but only when no prompt is open:
+        // an open one may already be running its own sign-in on this client.
+        return gateMmLoginPendingId ? undefined : ChecklistStore.signOutMmDashboardAccount();
+      }
       if (e && e.rosterInactive) {
         // Unlike a bad password, a real session exists here — drop it, and
         // never reach selectIdentity.

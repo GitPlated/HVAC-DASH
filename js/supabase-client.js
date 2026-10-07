@@ -424,6 +424,14 @@
     return /could not find the function/i.test(haystack);
   }
 
+  // The sign-in button stays disabled while the roster check runs, so a
+  // connection that stalls AFTER the password step passed (captive portal,
+  // black-holed TCP, exhausted DB pool) must not leave the person at a dead
+  // button with no message until the browser gives up: past this, the check
+  // gives up and answers "couldn't tell" like any other outage.
+  const ROSTER_CHECK_TIMEOUT_MS = 5000;
+  const ROSTER_CHECK_TIMED_OUT = {};
+
   // Asks the server whether the account that JUST signed in (this client's
   // current session) is still an ACTIVE row on the network roster. Takes no
   // argument on purpose: the RPC reads only the caller's own JWT email, so
@@ -431,11 +439,21 @@
   //
   // Contract: resolves false ONLY when the server answers a literal boolean
   // false. Everything else resolves true (active) or null ("couldn't tell":
-  // RPC missing, lookup error, malformed answer) and never rejects — the
-  // caller blocks on === false and proceeds on anything else.
+  // RPC missing, lookup error, malformed answer, no answer within
+  // ROSTER_CHECK_TIMEOUT_MS) and never rejects or hangs — the caller blocks on
+  // === false and proceeds on anything else.
   async function checkMmDashboardRosterActive() {
+    let timer;
     try {
-      const { data, error, status } = await client.rpc("hvac_aurora_caller_is_active_on_roster");
+      const timedOut = new Promise(function (resolve) {
+        timer = setTimeout(function () { resolve(ROSTER_CHECK_TIMED_OUT); }, ROSTER_CHECK_TIMEOUT_MS);
+      });
+      const answer = await Promise.race([client.rpc("hvac_aurora_caller_is_active_on_roster"), timedOut]);
+      if (answer === ROSTER_CHECK_TIMED_OUT) {
+        console.warn("Roster check skipped (timed out after " + ROSTER_CHECK_TIMEOUT_MS + " ms)");
+        return null;
+      }
+      const { data, error, status } = answer;
       if (error) {
         console.warn("Roster check skipped (" + (isMissingFunctionError(error, status) ? "RPC not deployed yet" : "lookup failed") + "):", error);
         return null;
@@ -446,6 +464,8 @@
     } catch (e) {
       console.warn("Roster check skipped (lookup failed):", e);
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
