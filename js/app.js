@@ -157,9 +157,18 @@ const IDENTITY_OPTIONS = [];
 const IDENTITY_BY_ID = {};
 let IDENTITY_CARDS_STATE = "loading"; // "loading" | "ready" | "unavailable"
 let identityCardsLoadSeq = 0; // identifies the ONE card-list request whose answer may still be applied
+let IDENTITY_CARDS_SKIPPED = 0; // roster rows the last answer could not show (a notice says so)
+let identityCardsAskedAt = 0; // when the roster was last asked (Date.now()), to damp focus/visibility bursts
+let identityPickSeq = 0; // identifies the ONE attribution-card pick whose roster re-check may still select
 
 const IDENTITY_UNAVAILABLE_NOTICE = "Roster unavailable - reload or ask a manager";
 const IDENTITY_LOADING_NOTICE = "Loading names…";
+// Shown beside a ready list when the roster sent rows the page could not turn
+// into a card (an unusable email, a reserved name): fail closed (no card) but
+// never silently, so somebody knows to fix the roster row.
+function identitySkippedNotice(n) {
+  return n + (n === 1 ? " roster entry" : " roster entries") + " could not be shown - ask a manager";
+}
 
 // ---- per-card accent: a pure function of the card's stable key (no names).
 // 32-bit FNV-1a of the key picks a hue; saturation is fixed (muted for the
@@ -284,14 +293,26 @@ function clearAccentVars(el) {
 // the choice never depends on the order the rows arrived in). Cards are ordered
 // by name (code-point order, so it cannot vary with the browser's locale). The
 // email of an attribution-only row is never carried over.
-function buildIdentityOptions(rows) {
+//
+// `report` (optional) is filled with { skipped }: how many rows were dropped for
+// one of those reasons (a duplicate name that collapsed into another card is NOT
+// a skipped row, its person is shown). The gate turns a non-zero count into a
+// visible notice, so a leader whose roster row is unusable is not silently
+// missing a card. The names "Admin" and the sandbox's are reserved for the two
+// app-config cards: a roster row carrying either never gets a card of its own.
+function buildIdentityOptions(rows, report) {
   const sandboxNameKey = SANDBOX_IDENTITY.name.replace(/\s+/g, " ").toLowerCase();
+  const adminNameKey = ADMIN_IDENTITY.name.replace(/\s+/g, " ").toLowerCase();
   const sandboxEmail = SANDBOX_IDENTITY.mmDashboardEmail.toLowerCase();
-  const byName = {};
+  // A Map, not a plain object: a roster name such as "constructor" or
+  // "__proto__" (lower-cased it is still a key an object already has) must be a
+  // card like any other.
+  const byName = new Map();
+  let skipped = 0;
   (Array.isArray(rows) ? rows : []).forEach(function (row) {
-    if (!row || typeof row !== "object") return;
+    if (!row || typeof row !== "object") { skipped++; return; }
     const name = typeof row.name === "string" ? row.name.trim() : "";
-    if (!name) { console.warn("Skipping a roster card row with no name"); return; }
+    if (!name) { console.warn("Skipping a roster card row with no name"); skipped++; return; }
     const nameKey = name.replace(/\s+/g, " ").toLowerCase();
     const email = typeof row.email === "string" ? row.email.trim() : "";
     let needsLogin;
@@ -301,20 +322,23 @@ function buildIdentityOptions(rows) {
       needsLogin = true;
     } else {
       console.warn("Skipping a roster card row with an unusable needs_login/email pair");
+      skipped++;
       return;
     }
-    if (nameKey === sandboxNameKey || (needsLogin && email.toLowerCase() === sandboxEmail)) {
-      console.warn("Skipping a roster card row that collides with the sandbox identity");
+    if (nameKey === sandboxNameKey || nameKey === adminNameKey || (needsLogin && email.toLowerCase() === sandboxEmail)) {
+      console.warn("Skipping a roster card row that collides with the Admin or sandbox identity");
+      skipped++;
       return;
     }
     const candidate = { name: name, nameKey: nameKey, needsLogin: needsLogin, email: needsLogin ? email : "" };
-    const prev = byName[nameKey];
+    const prev = byName.get(nameKey);
     const better = !prev
       || (candidate.needsLogin && !prev.needsLogin)
       || (candidate.needsLogin && prev.needsLogin && candidate.email.toLowerCase() < prev.email.toLowerCase());
-    if (better) byName[nameKey] = candidate;
+    if (better) byName.set(nameKey, candidate);
   });
-  const list = Object.keys(byName).map(function (k) { return byName[k]; });
+  if (report) report.skipped = skipped;
+  const list = Array.from(byName.values());
   list.sort(function (a, b) { return a.nameKey < b.nameKey ? -1 : a.nameKey > b.nameKey ? 1 : 0; });
   const usedIds = {};
   const usedHues = [];
@@ -342,7 +366,7 @@ function sameIdentityCard(a, b) {
 // open for a card which is gone, or is now a different kind of card (different
 // name, or sign-in vs attribution-only, or a different email), is closed, which
 // also bumps gateMmLoginAttempt so a sign-in still in flight for it is dead.
-function setIdentityCards(state, options) {
+function setIdentityCards(state, options, skipped) {
   const pendingPw = gatePendingIdentityId ? IDENTITY_BY_ID[gatePendingIdentityId] : null;
   const pendingMm = gateMmLoginPendingId ? IDENTITY_BY_ID[gateMmLoginPendingId] : null;
   const hadPw = !!gatePendingIdentityId, hadMm = !!gateMmLoginPendingId;
@@ -350,6 +374,7 @@ function setIdentityCards(state, options) {
   Object.keys(IDENTITY_BY_ID).forEach(function (k) { delete IDENTITY_BY_ID[k]; });
   options.forEach(function (o) { IDENTITY_OPTIONS.push(o); IDENTITY_BY_ID[o.id] = o; });
   IDENTITY_CARDS_STATE = state;
+  IDENTITY_CARDS_SKIPPED = state === "ready" && skipped > 0 ? skipped : 0;
   if (hadPw && !sameIdentityCard(pendingPw, IDENTITY_BY_ID[gatePendingIdentityId])) closeIdentityPasswordPrompt();
   if (hadMm && !sameIdentityCard(pendingMm, IDENTITY_BY_ID[gateMmLoginPendingId])) closeMmDashboardLoginPrompt();
   renderIdentityCards();
@@ -387,13 +412,47 @@ function renderIdentityCards() {
   const noticeText = document.getElementById("identity-roster-notice-text");
   const retry = document.getElementById("identity-roster-retry");
   if (notice && noticeText) {
-    notice.hidden = IDENTITY_CARDS_STATE === "ready";
-    noticeText.textContent = IDENTITY_CARDS_STATE === "unavailable" ? IDENTITY_UNAVAILABLE_NOTICE : IDENTITY_LOADING_NOTICE;
+    const showSkipped = IDENTITY_CARDS_STATE === "ready" && IDENTITY_CARDS_SKIPPED > 0;
+    notice.hidden = IDENTITY_CARDS_STATE === "ready" && !showSkipped;
+    noticeText.textContent = IDENTITY_CARDS_STATE === "unavailable" ? IDENTITY_UNAVAILABLE_NOTICE
+      : showSkipped ? identitySkippedNotice(IDENTITY_CARDS_SKIPPED)
+      : IDENTITY_LOADING_NOTICE;
     if (retry) retry.hidden = IDENTITY_CARDS_STATE !== "unavailable";
   }
   updateIdentityLockIndicators();
   const usersPanel = document.getElementById("manage-users-panel");
   if (usersPanel && !usersPanel.hidden) renderManageUsersList();
+}
+
+// One question to the roster, with no side effects on the page: resolves
+// { roster, skipped } (the cards built from the answer and how many rows could
+// not be shown) and rejects if the RPC fails, stalls, or answers with junk.
+function askRosterForCards() {
+  identityCardsAskedAt = Date.now();
+  return Promise.resolve()
+    .then(function () { return ChecklistStore.listHvacIdentities(); })
+    .then(function (rows) {
+      const report = { skipped: 0 };
+      const roster = buildIdentityOptions(rows, report);
+      return { roster: roster, skipped: report.skipped };
+    });
+}
+
+// Shows what askRosterForCards resolved: the ready list (roster cards, the
+// sandbox, Admin), or, when nothing usable came back, Admin only plus the notice.
+function applyRosterCards(answer) {
+  if (!answer.roster.length) {
+    console.error("Roster returned no usable identity cards");
+    setIdentityCards("unavailable", [ADMIN_IDENTITY]);
+    return;
+  }
+  const sandbox = Object.assign({}, SANDBOX_IDENTITY, { accent: identityAccentForKey(SANDBOX_IDENTITY.id, true) });
+  setIdentityCards("ready", answer.roster.concat([sandbox, ADMIN_IDENTITY]), answer.skipped);
+}
+
+function rosterCardsFailed(err) {
+  console.error("Couldn't load the roster identity cards:", err);
+  setIdentityCards("unavailable", [ADMIN_IDENTITY]);
 }
 
 // Asks the database for the card list and applies the answer, unless a newer
@@ -405,24 +464,86 @@ function renderIdentityCards() {
 function loadIdentityCards() {
   const seq = ++identityCardsLoadSeq;
   setIdentityCards("loading", [ADMIN_IDENTITY]);
-  return Promise.resolve()
-    .then(function () { return ChecklistStore.listHvacIdentities(); })
-    .then(function (rows) {
+  return askRosterForCards()
+    .then(function (answer) {
       if (seq !== identityCardsLoadSeq) return; // superseded
-      const roster = buildIdentityOptions(rows);
-      if (!roster.length) {
-        console.error("Roster returned no usable identity cards");
-        setIdentityCards("unavailable", [ADMIN_IDENTITY]);
-        return;
-      }
-      const sandbox = Object.assign({}, SANDBOX_IDENTITY, { accent: identityAccentForKey(SANDBOX_IDENTITY.id, true) });
-      setIdentityCards("ready", roster.concat([sandbox, ADMIN_IDENTITY]));
+      applyRosterCards(answer);
     })
     .catch(function (err) {
       if (seq !== identityCardsLoadSeq) return;
-      console.error("Couldn't load the roster identity cards:", err);
-      setIdentityCards("unavailable", [ADMIN_IDENTITY]);
+      rosterCardsFailed(err);
     });
+}
+
+// ---- keeping an open gate honest. A shared screen can sit on the gate for a
+// whole shift (or overnight), so the roster is asked again while the gate is
+// up: every IDENTITY_REFRESH_MS, and whenever the page becomes visible or gets
+// focus again (a phone waking up, a tab switched back to). Two safety nets sit
+// behind that, so even a card that outlived its person by a few seconds cannot
+// be used: an attribution-only pick is re-checked against the roster at click
+// time (confirmRosterCard), and a sign-in card has the roster-active check.
+const IDENTITY_REFRESH_MS = 60 * 1000;
+const IDENTITY_REFRESH_MIN_GAP_MS = 2000; // focus + visibilitychange arrive together
+
+function identityGateIsUp() {
+  const gate = document.getElementById("identity-gate");
+  return !!gate && !gate.hidden;
+}
+
+function rosterCardsSignature(roster, skipped) {
+  return JSON.stringify([skipped || 0, roster.map(function (o) { return [o.id, o.name, o.mmDashboardEmail || ""]; })]);
+}
+
+function shownRosterSignature() {
+  const shown = IDENTITY_OPTIONS.filter(function (o) { return !o.isAdmin && !o.isSandbox; });
+  return rosterCardsSignature(shown, IDENTITY_CARDS_SKIPPED);
+}
+
+// Background re-ask while the gate is up. Unlike a Switch it does NOT blank the
+// cards to "loading" first (they would flicker every minute); it asks, and
+// rebuilds the list only if the answer differs from what is shown (a rebuild
+// between a finger going down and up would eat the tap). A failed or empty
+// answer is handled exactly like a failed load: Admin only plus the notice.
+// An "unavailable" gate simply tries again. Never rejects.
+function refreshIdentityCards(force) {
+  if (!identityGateIsUp() || IDENTITY_CARDS_STATE === "loading") return Promise.resolve();
+  if (!force && Date.now() - identityCardsAskedAt < IDENTITY_REFRESH_MIN_GAP_MS) return Promise.resolve();
+  const seq = ++identityCardsLoadSeq;
+  return askRosterForCards()
+    .then(function (answer) {
+      if (seq !== identityCardsLoadSeq) return; // superseded
+      if (answer.roster.length && rosterCardsSignature(answer.roster, answer.skipped) === shownRosterSignature()) return;
+      applyRosterCards(answer);
+    })
+    .catch(function (err) {
+      if (seq !== identityCardsLoadSeq) return;
+      rosterCardsFailed(err);
+    });
+}
+
+// An attribution-only card has no sign-in, so nothing else would notice that
+// its person has left since the cards were drawn: ask the roster again before
+// the pick counts. Resolves true only when that fresh answer still holds the
+// same card (same name, still attribution-only) and nothing else was picked or
+// switched to meanwhile; otherwise the visible list is brought up to date (the
+// departed card disappears) and it resolves false. Never rejects.
+function confirmRosterCard(identity) {
+  const token = ++identityPickSeq;
+  return askRosterForCards().then(
+    function (answer) {
+      if (token !== identityPickSeq) return false;
+      ++identityCardsLoadSeq; // this answer is the newest: older in-flight ones must not overwrite it
+      const found = answer.roster.some(function (o) { return sameIdentityCard(o, identity); });
+      if (!found || rosterCardsSignature(answer.roster, answer.skipped) !== shownRosterSignature()) applyRosterCards(answer);
+      return found;
+    },
+    function (err) {
+      if (token !== identityPickSeq) return false;
+      ++identityCardsLoadSeq;
+      rosterCardsFailed(err);
+      return false;
+    }
+  );
 }
 
 let CURRENT_IDENTITY = null; // null until a gate option is picked (or after Switch)
@@ -666,6 +787,7 @@ function updateActingAsUI() {
 }
 
 function showIdentityGate() {
+  identityPickSeq++; // a pick still being re-checked against the roster must not select after a Switch
   CURRENT_IDENTITY = null;
   applyIdentityTheme(null);
   updateActingAsUI();
@@ -688,6 +810,7 @@ function hideIdentityGate() {
 function selectIdentity(identityId) {
   const identity = IDENTITY_BY_ID[identityId];
   if (!identity) return;
+  identityPickSeq++; // any other pick still being re-checked against the roster is now void
   CURRENT_IDENTITY = identity;
   applyIdentityTheme(identity);
   updateActingAsUI();
@@ -756,7 +879,7 @@ function submitIdentityPassword() {
       if (submitBtn) submitBtn.disabled = false;
       if (ok) {
         closeIdentityPasswordPrompt();
-        selectIdentity(identity.id);
+        selectRosterCard(identity);
       } else {
         err.textContent = "Incorrect password. Try again.";
         err.hidden = false;
@@ -1246,11 +1369,27 @@ function handleIdentityCardClick(identityId) {
     openMmDashboardLoginPrompt(identity);
     return;
   }
-  if (!identity.isAdmin && isNameProtected(identity.name)) {
-    openIdentityPasswordPrompt(identity);
+  if (identity.isAdmin) {
+    selectIdentity(identityId);
     return;
   }
-  selectIdentity(identityId);
+  // An attribution-only roster card: re-check the roster first (see
+  // confirmRosterCard), then either the lightweight password or an instant pick.
+  confirmRosterCard(identity).then(function (stillOnRoster) {
+    const live = stillOnRoster ? IDENTITY_BY_ID[identityId] : null;
+    if (!live) return;
+    if (isNameProtected(live.name)) openIdentityPasswordPrompt(live);
+    else selectIdentity(live.id);
+  });
+}
+
+// Final step of an attribution-only pick that needed this app's password: the
+// roster is asked once more, so a person who left while the prompt was open
+// cannot still be selected.
+function selectRosterCard(identity) {
+  confirmRosterCard(identity).then(function (stillOnRoster) {
+    if (stillOnRoster && IDENTITY_BY_ID[identity.id]) selectIdentity(identity.id);
+  });
 }
 
 function wireIdentityGate() {
@@ -1264,7 +1403,13 @@ function wireIdentityGate() {
     });
   }
   const retryBtn = document.getElementById("identity-roster-retry");
-  if (retryBtn) retryBtn.addEventListener("click", loadIdentityCards);
+  if (retryBtn) retryBtn.addEventListener("click", function () { loadIdentityCards(); });
+  // While the gate is up, keep asking the roster (see refreshIdentityCards).
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") refreshIdentityCards(false);
+  });
+  window.addEventListener("focus", function () { refreshIdentityCards(false); });
+  setInterval(function () { refreshIdentityCards(true); }, IDENTITY_REFRESH_MS);
   const switchBtn = document.getElementById("btn-switch-identity");
   if (switchBtn) switchBtn.addEventListener("click", showIdentityGate);
 

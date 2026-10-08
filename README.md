@@ -92,8 +92,23 @@ code edit, no SQL and no CSV step:
   MM Dashboard sign-in (password, the roster-active check below, then MFA)
   using the email the roster holds. A flagged person **without a role** gets
   an attribution-only card, exactly like the lightweight cards before.
-- The page asks the roster on load and again on every **Switch**, so a card
-  for someone who left mid-shift cannot be picked after the next Switch.
+- The page asks the roster on load and again on every **Switch**. A gate that
+  is simply left open is also refreshed: every minute, and whenever the page
+  becomes visible or focused again, so a shared screen does not keep showing
+  someone who has left. Picking a person without a sign-in (an attribution-only
+  card) re-checks the roster at that moment, so a card that outlived its person
+  by a few seconds is refused and removed. The list is only rebuilt when the
+  roster's answer actually changed.
+- A roster row the page cannot turn into a card (for example a leader whose
+  roster email has a typo, or a row named "Admin" or "Andrew Wu", which are
+  reserved for the Admin and Sandbox cards) is never guessed at. The gate says
+  "N roster entries could not be shown - ask a manager" so somebody knows to
+  fix that row.
+- **The card's kind follows the roster's MM Dashboard Role.** A flagged person
+  with a role signs in; if someone clears that role in Network Roster while
+  leaving the **HVAC dashboard card** switch on, the card becomes
+  attribution-only (no password) at the next refresh. Switch the card off, or
+  mark the seat open, when the person should no longer appear at all.
 
 The page gets the list from one narrow database function,
 `hvac_dash_identities('IL01')`, which returns `{ name, email, needs_login }`
@@ -137,7 +152,9 @@ check: right after the password
 passes, and before any MFA prompt, the page asks the database whether that
 account's email is still on an **active** `mm_roster` row that has an MM
 Dashboard Role (the same test Sync Login Access uses, so clearing someone's
-role in Network Roster locks their card too). A departed person's MM
+role in Network Roster refuses a sign-in from a card that was already on
+screen; once the list refreshes, a person who is still switched on without a
+role has an attribution-only card, see above). A departed person's MM
 Dashboard password otherwise keeps working here (Sync Login Access clears
 their role but never disables the account). Only a definite "no" blocks the
 card; if the check can't run (network error, no answer within 5 seconds, odd
