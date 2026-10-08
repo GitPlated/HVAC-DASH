@@ -76,76 +76,29 @@
    low enough that it never meaningfully moves the contrast of ink/status/
    room colors sitting on top of it.
 --------------------------------------------------------------------- */
-/* Opacity values below were picked by actually computing WCAG contrast
-   ratios of the app's dimmest text token (--ink-muted, e.g. .hint-text)
-   against the resulting blended background in both schemes, for each
-   identity's hue, and choosing the highest opacity that still keeps a
-   comfortable margin above the 4.5:1 / ~3.5:1 (dark/light — light mode's
-   ink-muted-on-bg-page was already only ~3.5:1 pre-existing, unrelated to
-   this feature) baseline the app already reads at today, while still being
-   an obvious, clearly-perceptible tint at a glance. Dark backgrounds read
-   an obvious color cast even at modest alpha, so 0.10 is enough there;
-   light mode needs to stay lower (0.06–0.07) since near-white bg-page +
-   fully-saturated accent hues erode --ink-muted's margin faster per unit
-   of alpha than dark-mode's already-dark background does — hence the
-   slightly lower value across all identities in light mode.
-   Jacolby (red) and John (green) were deliberately chosen a shade off the
-   app's existing --status-critical / --status-good tokens (see the
-   identity-theme-jacolby/john values below) so a quick glance at "who's
-   acting" is never confused with a critical-finding or OK status color.
-
-   The identities below (michael/david/ronald/wilberth, plus tyler, whose
-   card has since been removed) were added later and picked the same way,
-   plus an explicit pairwise pass: computed
-   RGB Euclidean distance AND hue-angle separation between every one of the
-   (then 8, now 7 -- dropping one only removes pairs) identity accents, AND against --status-good / --status-critical,
-   in both color schemes. Target was "clearly above" the distance/hue a
-   prior (rejected) violet measured against Brett's blue when a real user
-   complained it looked too similar (~84-87 RGB distance, ~34-36deg hue) —
-   that pair is the "too close" reference point, not a goal. Every pair
-   among the 8 identities clears both a ~84 RGB-distance and ~30deg hue-angle
-   bar EXCEPT two, both accepted as reasoned exceptions rather than defects:
-     - Ronald (burnt orange) vs Jacolby (red) and vs --status-critical: hue
-       angle alone is close (burnt orange unavoidably sits near the red
-       family on the wheel — a real "burnt orange" always does), but RGB
-       distance clears 76-98 in every scheme, which is still MORE distinct
-       than Jacolby-vs-status-critical's own already-shipped 27-37 —
-       i.e. more separated than a relationship this app already ships today.
-     - Michael (amber/gold) vs Ronald (burnt orange): both warm hues
-       sandwiched between red and yellow-green with limited wheel room; RGB
-       distance still clears 94-98, comfortably above the rejected pair's
-       84-87 lower bound, even though hue angle alone (~26-28deg) undershoots
-       the rough 30deg guideline slightly.
-   Every dark-mode accent was also checked for WCAG contrast as actual TEXT
-   (var(--identity-accent) is the color of .acting-as-name) against
-   --bg-panel-raised (#212120) and every light-mode accent against
-   --bg-page (#fcfcfb) in light mode — all 8 clear >=4:1 dark / >=3:1 light,
-   matching or beating the weakest ratio among the original 3 (Jacolby
-   dark 4.02:1, Michael/John light ~3.0-3.4:1). */
-.identity-theme-brett   { --identity-accent: #3987e5; --identity-wash: rgba(57, 135, 229, 0.10); }
-.identity-theme-jacolby { --identity-accent: #e0485a; --identity-wash: rgba(224, 72, 90, 0.10); }
-.identity-theme-john    { --identity-accent: #35b573; --identity-wash: rgba(53, 181, 115, 0.10); }
-.identity-theme-michael { --identity-accent: #d4b021; --identity-wash: rgba(212, 176, 33, 0.10); }
-.identity-theme-david   { --identity-accent: #a664d8; --identity-wash: rgba(166, 100, 216, 0.10); }
-.identity-theme-ronald  { --identity-accent: #f55a00; --identity-wash: rgba(245, 90, 0, 0.10); }
-.identity-theme-wilberth{ --identity-accent: #0ac2c2; --identity-wash: rgba(10, 194, 194, 0.10); }
-/* Andrew Wu — the sandbox identity (see IDENTITY_OPTIONS/isSandboxActor in
-   js/app.js). Deliberately a muted indigo/slate-blue rather than a fully
-   vivid hue like the real-technician accents above: it sits in the widest
-   open gap on the wheel (between Brett's blue and David's purple) so it's
-   still clearly its own color, but the lower saturation is itself a quiet
-   visual cue that this identity behaves differently. */
-.identity-theme-andrew  { --identity-accent: #6d7fd1; --identity-wash: rgba(109, 127, 209, 0.10); }
+/* Per-person accents used to be one hand-picked colour pair per NAME in this
+   file. Cards now come from the network roster (see js/app.js "identity cards"),
+   so nobody is named here: the accent is computed in JS from a hash of the
+   card's stable key (identityAccentForKey; hues are nudged apart so two cards
+   never look alike, see identitySeparateHue) and handed to the card, and to <body>
+   once that card is picked, as four custom properties (a dark and a light value
+   of the accent, and of its page wash). The lightness is searched per colour
+   scheme so the accent always clears WCAG 4.5:1 as text (it colours
+   .acting-as-name) against that scheme's --bg-panel-raised. The wash opacity
+   keeps the earlier reasoning: 0.10 on dark backgrounds, 0.07 on the near-white
+   light one, low enough that it never meaningfully moves the contrast of ink,
+   status or room colours sitting on it. With no card picked (page load, Admin)
+   no property is set and everything falls back to the original colours. */
+.identity-theme-hashed {
+  --identity-accent: var(--identity-accent-dark);
+  --identity-wash: var(--identity-wash-dark);
+}
 
 @media (prefers-color-scheme: light) {
-  .identity-theme-brett   { --identity-accent: #2a78d6; --identity-wash: rgba(42, 120, 214, 0.07); }
-  .identity-theme-jacolby { --identity-accent: #c23b52; --identity-wash: rgba(194, 59, 82, 0.06); }
-  .identity-theme-john    { --identity-accent: #1f9d5c; --identity-wash: rgba(31, 157, 92, 0.07); }
-  .identity-theme-michael { --identity-accent: #af8f0d; --identity-wash: rgba(175, 143, 13, 0.07); }
-  .identity-theme-david   { --identity-accent: #4d206f; --identity-wash: rgba(77, 32, 111, 0.07); }
-  .identity-theme-ronald  { --identity-accent: #913608; --identity-wash: rgba(145, 54, 8, 0.07); }
-  .identity-theme-wilberth{ --identity-accent: #084949; --identity-wash: rgba(8, 73, 73, 0.07); }
-  .identity-theme-andrew  { --identity-accent: #4a5aa8; --identity-wash: rgba(74, 90, 168, 0.07); }
+  .identity-theme-hashed {
+    --identity-accent: var(--identity-accent-light);
+    --identity-wash: var(--identity-wash-light);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -351,6 +304,28 @@ select:disabled, input:disabled, textarea:disabled {
   margin: 0 0 28px;
   color: var(--ink-muted);
   font-size: 0.9rem;
+}
+
+/* "Loading names" / "Roster unavailable - reload or ask a manager" — see
+   renderIdentityCards in js/app.js. Plain text plus a retry button (never
+   colour alone), sitting directly above the one Admin card that stays usable. */
+.identity-roster-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: -12px 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  color: var(--ink-secondary);
+  font-size: 0.9rem;
+}
+
+.identity-roster-notice[hidden],
+.identity-roster-notice [hidden] {
+  display: none;
 }
 
 .identity-gate-grid {

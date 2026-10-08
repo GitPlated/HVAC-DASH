@@ -105,56 +105,325 @@ const CATEGORY_COLORS = {
 // disable at render time AND to early-return inside the click/change
 // handler itself, so nothing is reachable through devtools DOM tampering
 // either).
-// mmDashboardEmail marks a card as paired to a real, WORKING MM_Dashboard
-// (Supabase Auth) account. Two different kinds of evidence were used here,
-// and they are NOT equally reliable — this bit us once already (Brett
-// Stone's card locked him out with no fallback, because an FMX/mm_roster
-// listing turned out NOT to mean the account was actually live):
-//   - Michael, David, Wilberth: confirmed directly with Jacob
-//     2026-09-23, person by person, after the Brett lockout. (Tyler
-//     Christensen was confirmed the same way; his card was removed
-//     2026-10-06, ahead of his 2026-10-07 last day -- his real sign-in is
-//     what opened it, so leaving it would have left a live card behind.)
-//   - Ronald and Andrew Wu (2026-09-23): confirmed instead against
-//     MM_Dashboard's own login.html USERS map, which is the actual
-//     credential table doLogin() authenticates against — not FMX, not
-//     mm_roster. Both entries there explicitly say "migrated to a real
-//     Supabase Auth account" (Ronald as "Ron Vogel", ronald.vogel@
-//     factor75.com; Andrew Wu, andrew.wu@hellofresh.com), and Ronald's is
-//     independently corroborated by mm_roster_access_control.sql's own
-//     mm_dashboard_role grant. MM_Dashboard's "Andrew Wu" is itself
-//     documented there as a generic "visitor" demo login (full mm access,
-//     deliberately off every roster) -- the same role Aurora's Andrew Wu
-//     already plays, so gating this sandbox behind that same real
-//     credential (rather than leaving it open to anyone) is a natural fit,
-//     not a mismatch. isSandbox still fakes every write of his regardless
-//     of how he signed in — the two flags are independent.
-// Brett, Jacolby, and John have neither kind of evidence, so they keep
-// this app's own lightweight per-name password instead (see
-// hvac_aurora_user_passwords / the RPCs in supabase-client.js) — none of
-// them currently has one set (hvac_aurora_list_protected_user_names,
-// 2026-09-23), same as before this session touched anything, so their
-// cards are simply unprotected. Clicking a card with mmDashboardEmail opens
-// the real sign-in prompt instead of the lightweight one — see
-// openMmDashboardLoginPrompt below.
-const IDENTITY_OPTIONS = [
-  { id: "brett", name: "Brett Stone", themeClass: "identity-theme-brett" },
-  { id: "jacolby", name: "Jacolby Moffett", themeClass: "identity-theme-jacolby" },
-  { id: "john", name: "John Danhoff", themeClass: "identity-theme-john" },
-  { id: "michael", name: "Michael Petersen", themeClass: "identity-theme-michael", mmDashboardEmail: "michael.petersen@factor75.com" },
-  { id: "david", name: "David Haney", themeClass: "identity-theme-david", mmDashboardEmail: "david.haney@factor75.com" },
-  { id: "ronald", name: "Ronald Vogel", themeClass: "identity-theme-ronald", mmDashboardEmail: "ronald.vogel@factor75.com" },
-  { id: "wilberth", name: "Wilberth Carrizal", themeClass: "identity-theme-wilberth", mmDashboardEmail: "wilberth.carrizal@factor75.com" },
-  // Full write access in the UI (canEdit() below treats him like any other
-  // named identity), but every write is intercepted before it reaches
-  // Supabase — see the sandbox guard further down this file, which wraps
-  // ChecklistStore's write methods to fabricate a local-only fake response
-  // whenever the CURRENT identity is flagged isSandbox.
-  { id: "andrew", name: "Andrew Wu", themeClass: "identity-theme-andrew", isSandbox: true, mmDashboardEmail: "andrew.wu@hellofresh.com" },
-  { id: "admin", name: "Admin", themeClass: null, isAdmin: true }
-];
+// ------------------------------------------------- identity cards (roster-driven)
+// THE RULE: the network roster (mm_roster) is the single source of truth for
+// who gets a card. This file names NOBODY. Cards come from the
+// hvac_dash_identities('IL01') RPC (see supabase/ and ChecklistStore.
+// listHvacIdentities in js/supabase-client.js), which returns the IL01 roster
+// rows flagged hvac_dash that are active and have an email. So:
+//   - a seat marked open / a person who leaves loses their card by itself,
+//   - a new person flagged in Network Roster gets a card by themselves,
+//   - no code edit, SQL or CSV step is ever needed to add or remove a name.
+//
+// Each RPC row is { name, email, needs_login }:
+//   needs_login = true   the person has an MM Dashboard role, so they have a
+//                        real MM_Dashboard (Supabase Auth) account: their card
+//                        opens the real sign-in (password, roster-active check,
+//                        then MFA) using the email the RPC returned. The email
+//                        is only ever returned for these rows.
+//   needs_login = false  attribution only: no sign-in, no email. The card
+//                        selects instantly, or asks for this app's own
+//                        lightweight per-name password if one is set (see the
+//                        password gate below; user_passwords is keyed by the
+//                        display name).
+//
+// NO FROZEN FALLBACK. If the RPC is missing, errors, stalls, or answers with no
+// usable rows, the cards area says "Roster unavailable - reload or ask a
+// manager" and ONLY the Admin (view-only) card stays usable, so the floor can
+// still look at the dashboard but nobody can write without a roster identity.
+//
+// Admin is app config (view-only, not a person). The sandbox card below is the
+// ONE deliberate off-roster exception. Stored actor names in the hvac tables are
+// historical records and are never rewritten.
+const ADMIN_IDENTITY = { id: "admin", name: "Admin", isAdmin: true };
+
+// THE ONE OFF-ROSTER EXCEPTION: a sandbox demo login. Full write access in the
+// UI (canEdit() treats it like any named identity) but every write is
+// intercepted before it reaches Supabase (see the sandbox guard further down,
+// which keys on isSandbox). It signs in with a real Supabase Auth account that
+// is deliberately kept OFF mm_roster (MM_Dashboard's
+// supabase_auth_app_metadata_backfill.ps1 $PermanentlyExcludedEmails; the same
+// kind of exception as in MM_Dashboard's api/sync-app-metadata.js), so its
+// email is also the one account exempt from the roster-active check
+// (ROSTER_CHECK_EXEMPT_EMAILS below derives from this constant). It is shown
+// only while the roster list is loaded, and a roster row with this name or email
+// never gets a card of its own (buildIdentityOptions), so a real person can
+// never be confused with the sandbox in attribution.
+const SANDBOX_IDENTITY = { id: "sandbox", name: "Andrew Wu", isSandbox: true, mmDashboardEmail: "andrew.wu@hellofresh.com" };
+
+// Live card list, rebuilt in place by setIdentityCards (never reassigned, so
+// every reference stays valid). Starts as just Admin until the roster answers.
+const IDENTITY_OPTIONS = [];
 const IDENTITY_BY_ID = {};
-IDENTITY_OPTIONS.forEach(function (o) { IDENTITY_BY_ID[o.id] = o; });
+let IDENTITY_CARDS_STATE = "loading"; // "loading" | "ready" | "unavailable"
+let identityCardsLoadSeq = 0; // identifies the ONE card-list request whose answer may still be applied
+
+const IDENTITY_UNAVAILABLE_NOTICE = "Roster unavailable - reload or ask a manager";
+const IDENTITY_LOADING_NOTICE = "Loading names…";
+
+// ---- per-card accent: a pure function of the card's stable key (no names).
+// 32-bit FNV-1a of the key picks a hue; saturation is fixed (muted for the
+// sandbox, a quiet cue that it behaves differently) and lightness is searched
+// per colour scheme until the accent reads as TEXT (it colours .acting-as-name)
+// at WCAG >= 4.5:1 against that scheme's raised panel colour. The hash alone
+// can land two people on (nearly) the same hue, which defeats a "who is acting"
+// glance, so buildIdentityOptions nudges a card's hue (in fixed steps, in name
+// order, always the same way) until it is at least IDENTITY_MIN_HUE_GAP degrees
+// from every card before it. A card's colour therefore depends only on the
+// cards that sort before it: someone joining or leaving can change the colour of
+// the cards after them, and only where those collided.
+const IDENTITY_MIN_HUE_GAP = 24;
+
+function identityKeyHash(text) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+function hslToRgb(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = (h % 360) / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  let r = 0, g = 0, b = 0;
+  if (hp < 1) { r = c; g = x; } else if (hp < 2) { r = x; g = c; } else if (hp < 3) { g = c; b = x; }
+  else if (hp < 4) { g = x; b = c; } else if (hp < 5) { r = x; b = c; } else { r = c; b = x; }
+  const m = l - c / 2;
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+function relativeLuminance(rgb) {
+  const f = rgb.map(function (v) { const c = v / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); });
+  return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2];
+}
+
+function contrastRatio(rgbA, rgbB) {
+  const a = relativeLuminance(rgbA), b = relativeLuminance(rgbB);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+function rgbToHex(rgb) {
+  return "#" + rgb.map(function (v) { return (v < 16 ? "0" : "") + v.toString(16); }).join("");
+}
+
+// --bg-panel-raised in each scheme (css/style.css :root tokens).
+const IDENTITY_ACCENT_BG_DARK = [0x21, 0x21, 0x20];
+const IDENTITY_ACCENT_BG_LIGHT = [0xf5, 0xf4, 0xf0];
+
+function identityHueDistance(a, b) {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+// Moves `hue` by a fixed stride (37 degrees, coprime with 360 so it visits every
+// hue) until it is at least IDENTITY_MIN_HUE_GAP from every hue in `used`. Keeps
+// `hue` itself when it is already fine. If the wheel is too full for that (more
+// cards than gaps), it takes the candidate that is furthest from its nearest
+// neighbour (the first such one), so the answer is still deterministic.
+function identitySeparateHue(hue, used) {
+  let best = hue, bestGap = -1;
+  for (let k = 0; k < 360; k++) {
+    const cand = (hue + 37 * k) % 360;
+    let gap = 360;
+    for (let i = 0; i < used.length; i++) gap = Math.min(gap, identityHueDistance(cand, used[i]));
+    if (gap >= IDENTITY_MIN_HUE_GAP) return cand;
+    if (gap > bestGap) { bestGap = gap; best = cand; }
+  }
+  return best;
+}
+
+function identityAccentForKey(key, muted, hueOverride) {
+  const hue = hueOverride == null ? identityKeyHash(String(key)) % 360 : hueOverride;
+  const sat = muted ? 0.38 : 0.70;
+  let dark = null, light = null;
+  for (let l = 58; l <= 96 && !dark; l++) {
+    const rgb = hslToRgb(hue, sat, l / 100);
+    if (contrastRatio(rgb, IDENTITY_ACCENT_BG_DARK) >= 4.5) dark = rgb;
+  }
+  for (let l = 46; l >= 4 && !light; l--) {
+    const rgb = hslToRgb(hue, sat, l / 100);
+    if (contrastRatio(rgb, IDENTITY_ACCENT_BG_LIGHT) >= 4.5) light = rgb;
+  }
+  dark = dark || [255, 255, 255];
+  light = light || [0, 0, 0];
+  return {
+    hue: hue,
+    dark: rgbToHex(dark),
+    light: rgbToHex(light),
+    washDark: "rgba(" + dark.join(", ") + ", 0.10)",
+    washLight: "rgba(" + light.join(", ") + ", 0.07)"
+  };
+}
+
+const IDENTITY_ACCENT_PROPS = ["--identity-accent-dark", "--identity-accent-light", "--identity-wash-dark", "--identity-wash-light"];
+
+function setAccentVars(el, accent) {
+  el.style.setProperty("--identity-accent-dark", accent.dark);
+  el.style.setProperty("--identity-accent-light", accent.light);
+  el.style.setProperty("--identity-wash-dark", accent.washDark);
+  el.style.setProperty("--identity-wash-light", accent.washLight);
+}
+
+function clearAccentVars(el) {
+  IDENTITY_ACCENT_PROPS.forEach(function (p) { el.style.removeProperty(p); });
+}
+
+// Turns the RPC's rows into the roster half of the card list. Pure (no DOM,
+// no network). Rows it cannot trust are skipped with a console warning, never
+// guessed at:
+//   - a row without a usable name,
+//   - needs_login anything other than a literal true/false,
+//   - needs_login = true with no usable email (it must never silently
+//     downgrade to an attribution-only card, which would let anyone act as a
+//     person who is supposed to sign in),
+//   - the sandbox's own name or email (see SANDBOX_IDENTITY).
+// Two rows with the same name collapse into ONE card, and the stricter one wins
+// (a sign-in beats attribution-only; between two sign-ins the smaller email, so
+// the choice never depends on the order the rows arrived in). Cards are ordered
+// by name (code-point order, so it cannot vary with the browser's locale). The
+// email of an attribution-only row is never carried over.
+function buildIdentityOptions(rows) {
+  const sandboxNameKey = SANDBOX_IDENTITY.name.replace(/\s+/g, " ").toLowerCase();
+  const sandboxEmail = SANDBOX_IDENTITY.mmDashboardEmail.toLowerCase();
+  const byName = {};
+  (Array.isArray(rows) ? rows : []).forEach(function (row) {
+    if (!row || typeof row !== "object") return;
+    const name = typeof row.name === "string" ? row.name.trim() : "";
+    if (!name) { console.warn("Skipping a roster card row with no name"); return; }
+    const nameKey = name.replace(/\s+/g, " ").toLowerCase();
+    const email = typeof row.email === "string" ? row.email.trim() : "";
+    let needsLogin;
+    if (row.needs_login === false) {
+      needsLogin = false;
+    } else if (row.needs_login === true && /^[^\s@]+@[^\s@]+$/.test(email)) {
+      needsLogin = true;
+    } else {
+      console.warn("Skipping a roster card row with an unusable needs_login/email pair");
+      return;
+    }
+    if (nameKey === sandboxNameKey || (needsLogin && email.toLowerCase() === sandboxEmail)) {
+      console.warn("Skipping a roster card row that collides with the sandbox identity");
+      return;
+    }
+    const candidate = { name: name, nameKey: nameKey, needsLogin: needsLogin, email: needsLogin ? email : "" };
+    const prev = byName[nameKey];
+    const better = !prev
+      || (candidate.needsLogin && !prev.needsLogin)
+      || (candidate.needsLogin && prev.needsLogin && candidate.email.toLowerCase() < prev.email.toLowerCase());
+    if (better) byName[nameKey] = candidate;
+  });
+  const list = Object.keys(byName).map(function (k) { return byName[k]; });
+  list.sort(function (a, b) { return a.nameKey < b.nameKey ? -1 : a.nameKey > b.nameKey ? 1 : 0; });
+  const usedIds = {};
+  const usedHues = [];
+  return list.map(function (c) {
+    // Stable card key: a hash of the normalised name (the only stable thing an
+    // attribution-only card has). A 32-bit collision between two different
+    // names is vanishingly unlikely; the suffix keeps ids unique if one happens.
+    let id = "c" + ("00000000" + identityKeyHash(c.nameKey).toString(16)).slice(-8);
+    let n = 1;
+    while (usedIds[id] || id === ADMIN_IDENTITY.id || id === SANDBOX_IDENTITY.id) id = id.replace(/-\d+$/, "") + "-" + (++n);
+    usedIds[id] = true;
+    const hue = identitySeparateHue(identityKeyHash(id) % 360, usedHues);
+    usedHues.push(hue);
+    const option = { id: id, name: c.name, accent: identityAccentForKey(id, false, hue) };
+    if (c.needsLogin) option.mmDashboardEmail = c.email;
+    return option;
+  });
+}
+
+function sameIdentityCard(a, b) {
+  return !!(a && b) && a.name === b.name && (a.mmDashboardEmail || "") === (b.mmDashboardEmail || "");
+}
+
+// The ONE place the live card list changes. A sign-in or password prompt that is
+// open for a card which is gone, or is now a different kind of card (different
+// name, or sign-in vs attribution-only, or a different email), is closed, which
+// also bumps gateMmLoginAttempt so a sign-in still in flight for it is dead.
+function setIdentityCards(state, options) {
+  const pendingPw = gatePendingIdentityId ? IDENTITY_BY_ID[gatePendingIdentityId] : null;
+  const pendingMm = gateMmLoginPendingId ? IDENTITY_BY_ID[gateMmLoginPendingId] : null;
+  const hadPw = !!gatePendingIdentityId, hadMm = !!gateMmLoginPendingId;
+  IDENTITY_OPTIONS.length = 0;
+  Object.keys(IDENTITY_BY_ID).forEach(function (k) { delete IDENTITY_BY_ID[k]; });
+  options.forEach(function (o) { IDENTITY_OPTIONS.push(o); IDENTITY_BY_ID[o.id] = o; });
+  IDENTITY_CARDS_STATE = state;
+  if (hadPw && !sameIdentityCard(pendingPw, IDENTITY_BY_ID[gatePendingIdentityId])) closeIdentityPasswordPrompt();
+  if (hadMm && !sameIdentityCard(pendingMm, IDENTITY_BY_ID[gateMmLoginPendingId])) closeMmDashboardLoginPrompt();
+  renderIdentityCards();
+}
+
+function buildIdentityCardElement(identity) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "identity-card" + (identity.isAdmin ? " identity-card-admin" : " identity-theme-hashed");
+  card.dataset.identity = identity.id;
+  if (identity.accent) setAccentVars(card, identity.accent);
+  const swatch = document.createElement("span");
+  swatch.className = "identity-card-swatch";
+  const nameEl = document.createElement("span");
+  nameEl.className = "identity-card-name";
+  nameEl.textContent = identity.name; // textContent: a roster name is never parsed as HTML
+  card.appendChild(swatch);
+  card.appendChild(nameEl);
+  if (identity.isSandbox || identity.isAdmin) {
+    const badge = document.createElement("span");
+    badge.className = "identity-card-badge";
+    badge.textContent = identity.isAdmin ? "View only" : "Sandbox";
+    card.appendChild(badge);
+  }
+  return card;
+}
+
+function renderIdentityCards() {
+  const grid = document.getElementById("identity-gate-grid");
+  if (grid) {
+    grid.textContent = "";
+    IDENTITY_OPTIONS.forEach(function (o) { grid.appendChild(buildIdentityCardElement(o)); });
+  }
+  const notice = document.getElementById("identity-roster-notice");
+  const noticeText = document.getElementById("identity-roster-notice-text");
+  const retry = document.getElementById("identity-roster-retry");
+  if (notice && noticeText) {
+    notice.hidden = IDENTITY_CARDS_STATE === "ready";
+    noticeText.textContent = IDENTITY_CARDS_STATE === "unavailable" ? IDENTITY_UNAVAILABLE_NOTICE : IDENTITY_LOADING_NOTICE;
+    if (retry) retry.hidden = IDENTITY_CARDS_STATE !== "unavailable";
+  }
+  updateIdentityLockIndicators();
+  const usersPanel = document.getElementById("manage-users-panel");
+  if (usersPanel && !usersPanel.hidden) renderManageUsersList();
+}
+
+// Asks the database for the card list and applies the answer, unless a newer
+// request has started since (a slow first answer must never overwrite the
+// answer to a later Switch). Never rejects. While a request is in flight no
+// roster card is shown (only Admin), so a card the roster has since dropped
+// cannot be picked from a stale list; any failure or an empty/unusable answer
+// leaves Admin only plus the notice (see the NO FROZEN FALLBACK note above).
+function loadIdentityCards() {
+  const seq = ++identityCardsLoadSeq;
+  setIdentityCards("loading", [ADMIN_IDENTITY]);
+  return Promise.resolve()
+    .then(function () { return ChecklistStore.listHvacIdentities(); })
+    .then(function (rows) {
+      if (seq !== identityCardsLoadSeq) return; // superseded
+      const roster = buildIdentityOptions(rows);
+      if (!roster.length) {
+        console.error("Roster returned no usable identity cards");
+        setIdentityCards("unavailable", [ADMIN_IDENTITY]);
+        return;
+      }
+      const sandbox = Object.assign({}, SANDBOX_IDENTITY, { accent: identityAccentForKey(SANDBOX_IDENTITY.id, true) });
+      setIdentityCards("ready", roster.concat([sandbox, ADMIN_IDENTITY]));
+    })
+    .catch(function (err) {
+      if (seq !== identityCardsLoadSeq) return;
+      console.error("Couldn't load the roster identity cards:", err);
+      setIdentityCards("unavailable", [ADMIN_IDENTITY]);
+    });
+}
 
 let CURRENT_IDENTITY = null; // null until a gate option is picked (or after Switch)
 let CURRENT_PANEL_CHECKPOINT = null; // checkpoint behind the open slide-over, if any — lets a mid-session Switch rebuild it in place
@@ -244,17 +513,18 @@ function isAdminView() {
   return !!(CURRENT_IDENTITY && CURRENT_IDENTITY.isAdmin);
 }
 
-// Andrew Wu only — canEdit() above is already true for him (he's not
-// Admin), so every checklist/finding/notes control behaves normally. This
-// just flags the identity so the ChecklistStore sandbox guard below knows to
-// fake his writes instead of sending them to Supabase.
+// The sandbox identity only (SANDBOX_IDENTITY above) — canEdit() above is
+// already true for it (it is not Admin), so every checklist/finding/notes
+// control behaves normally. This just flags the identity so the
+// ChecklistStore sandbox guard below knows to fake its writes instead of
+// sending them to Supabase.
 function isSandboxActor() {
   return !!(CURRENT_IDENTITY && CURRENT_IDENTITY.isSandbox);
 }
 
 // ----------------------------------------------------------- sandbox guard
 // Wraps the four ChecklistStore methods app.js ever writes through so that,
-// whenever the CURRENT identity is flagged isSandbox (Andrew Wu), each one
+// whenever the CURRENT identity is flagged isSandbox (the sandbox card), each one
 // fabricates a locally-unique fake row instead of touching Supabase, and
 // resolves with exactly the shape the real call would have produced — every
 // existing .then() handler in this file (which pushes the result into
@@ -318,11 +588,11 @@ function isSandboxActor() {
     if (!isSandboxActor()) return realAddFindingUpdate.apply(ChecklistStore, arguments);
     const nowIso = new Date().toISOString();
     // The existing finding may be perfectly real (opened by someone else
-    // before Andrew switched in) — applyFindingResult() REPLACES the whole
+    // before the sandbox card switched in) — applyFindingResult() REPLACES the whole
     // FINDINGS_LIST entry with whatever this resolves, so every field that
     // isn't changing here must still be carried forward, or this update
     // would silently blank out checkpoint_id/item_key/opened_at going
-    // forward for the rest of Andrew's session.
+    // forward for the rest of the sandbox session.
     const existing = FINDINGS_BY_ID[findingId] || {};
     return Promise.resolve({
       finding: {
@@ -341,8 +611,8 @@ function isSandboxActor() {
     });
   };
 
-  // Shift-report writes fake the same way as everything else above: Andrew
-  // sees a normal-looking success (a fake row / fake public URL) and nothing
+  // Shift-report writes fake the same way as everything else above: the sandbox
+  // user sees a normal-looking success (a fake row / fake public URL) and nothing
   // reaches Supabase. Fake photo URLs are never fetchable, but a sandbox
   // report is never shown back either: the EOS Reports tab reads Supabase,
   // which sandbox writes never reach.
@@ -367,10 +637,12 @@ function currentActorName() {
 }
 
 function applyIdentityTheme(identity) {
-  IDENTITY_OPTIONS.forEach(function (o) {
-    if (o.themeClass) document.body.classList.remove(o.themeClass);
-  });
-  if (identity && identity.themeClass) document.body.classList.add(identity.themeClass);
+  document.body.classList.remove("identity-theme-hashed");
+  clearAccentVars(document.body);
+  if (identity && identity.accent) {
+    document.body.classList.add("identity-theme-hashed");
+    setAccentVars(document.body, identity.accent);
+  }
 }
 
 function updateActingAsUI() {
@@ -402,6 +674,10 @@ function showIdentityGate() {
   closeManagePanel();
   const gate = document.getElementById("identity-gate");
   if (gate) gate.hidden = false;
+  // Ask the roster again on every Switch: the page can sit open on a shared
+  // device for a whole shift, and a card for someone who has left since the
+  // page loaded must not still be pickable.
+  loadIdentityCards();
 }
 
 function hideIdentityGate() {
@@ -519,10 +795,11 @@ let gateMmLoginAttempt = 0;
 // ChecklistStore.checkMmDashboardRosterActive and
 // supabase/2026-10-07_hvac_aurora_roster_active_check.sql) — a departed
 // person's Auth password otherwise keeps working here. Accounts listed below
-// skip that check: Andrew Wu's is a real Auth account kept off mm_roster ON
-// PURPOSE (MM_Dashboard's supabase_auth_app_metadata_backfill.ps1,
-// $PermanentlyExcludedEmails), so "no active row" would lock him out.
-const ROSTER_CHECK_EXEMPT_EMAILS = ["andrew.wu@hellofresh.com"];
+// skip that check: the sandbox account (SANDBOX_IDENTITY) is a real Auth account
+// kept off mm_roster ON PURPOSE (MM_Dashboard's
+// supabase_auth_app_metadata_backfill.ps1, $PermanentlyExcludedEmails), so "no
+// active row" would lock it out. Derived from that one constant on purpose.
+const ROSTER_CHECK_EXEMPT_EMAILS = [SANDBOX_IDENTITY.mmDashboardEmail];
 
 function rosterCheckApplies(email) {
   return ROSTER_CHECK_EXEMPT_EMAILS.indexOf(String(email || "").trim().toLowerCase()) === -1;
@@ -707,8 +984,8 @@ function submitMmDashboardMfaCode() {
 }
 
 // -------------------------------------------------------- password management module
-// Reveals a master-password prompt, then (on success) a panel listing all 8
-// named users with Set/Update + Remove controls. Admin is never listed here
+// Reveals a master-password prompt, then (on success) a panel listing every roster card
+// (sign-in cards are managed elsewhere) with Set/Update + Remove controls. Admin is never listed here
 // — it never has a password (view-only, no write path to protect).
 // MASTER_PASSWORD_CACHE holds the master password ONLY for the lifetime this
 // panel is open (in memory, never localStorage/sessionStorage) so the admin
@@ -778,7 +1055,15 @@ function renderManageUsersList() {
   const list = document.getElementById("manage-users-list");
   if (!list) return;
   list.innerHTML = "";
-  IDENTITY_OPTIONS.filter(function (o) { return !o.isAdmin; }).forEach(function (identity) {
+  const named = IDENTITY_OPTIONS.filter(function (o) { return !o.isAdmin; });
+  if (!named.length) {
+    const none = document.createElement("div");
+    none.className = "manage-user-row-elsewhere-note";
+    none.textContent = IDENTITY_CARDS_STATE === "loading" ? IDENTITY_LOADING_NOTICE : IDENTITY_UNAVAILABLE_NOTICE;
+    list.appendChild(none);
+    return;
+  }
+  named.forEach(function (identity) {
     list.appendChild(identity.mmDashboardEmail ? buildManagedElsewhereRow(identity) : buildManageUserRow(identity));
   });
 }
@@ -947,29 +1232,39 @@ function wireManagePasswordsModule() {
   if (closeBtn) closeBtn.addEventListener("click", closeManagePanel);
 }
 
+function handleIdentityCardClick(identityId) {
+  const identity = IDENTITY_BY_ID[identityId];
+  if (!identity) return;
+  // A card linked to a real MM_Dashboard account always gets the real
+  // sign-in detour, checked first — it's a fixed property of the card,
+  // not a toggleable "protected" state the way the lightweight
+  // per-name password is. Only named, currently-protected users (with
+  // neither of those) get the lightweight password detour — Admin and
+  // every unprotected named user still select instantly, zero
+  // friction, exactly as before this feature.
+  if (identity.mmDashboardEmail) {
+    openMmDashboardLoginPrompt(identity);
+    return;
+  }
+  if (!identity.isAdmin && isNameProtected(identity.name)) {
+    openIdentityPasswordPrompt(identity);
+    return;
+  }
+  selectIdentity(identityId);
+}
+
 function wireIdentityGate() {
-  document.querySelectorAll(".identity-card").forEach(function (card) {
-    card.addEventListener("click", function () {
-      const identity = IDENTITY_BY_ID[card.dataset.identity];
-      if (!identity) return;
-      // A card linked to a real MM_Dashboard account always gets the real
-      // sign-in detour, checked first — it's a fixed property of the card,
-      // not a toggleable "protected" state the way the lightweight
-      // per-name password is. Only named, currently-protected users (with
-      // neither of those) get the lightweight password detour — Admin and
-      // every unprotected named user still select instantly, zero
-      // friction, exactly as before this feature.
-      if (identity.mmDashboardEmail) {
-        openMmDashboardLoginPrompt(identity);
-        return;
-      }
-      if (!identity.isAdmin && isNameProtected(identity.name)) {
-        openIdentityPasswordPrompt(identity);
-        return;
-      }
-      selectIdentity(card.dataset.identity);
+  // The cards are rebuilt whenever the roster list loads, so one delegated
+  // listener on the grid serves every card, present and future.
+  const grid = document.getElementById("identity-gate-grid");
+  if (grid) {
+    grid.addEventListener("click", function (e) {
+      const card = e.target && e.target.closest ? e.target.closest(".identity-card") : null;
+      if (card && grid.contains(card)) handleIdentityCardClick(card.dataset.identity);
     });
-  });
+  }
+  const retryBtn = document.getElementById("identity-roster-retry");
+  if (retryBtn) retryBtn.addEventListener("click", loadIdentityCards);
   const switchBtn = document.getElementById("btn-switch-identity");
   if (switchBtn) switchBtn.addEventListener("click", showIdentityGate);
 
@@ -3994,9 +4289,9 @@ function isShiftReportModalOpen() {
 // never-block-on-a-side-effect reasoning as the photo-upload failures a
 // few lines below this call site).
 function postShiftReportToSlack(findings, actor, checked, total, justification, photos, reportId) {
-  // Andrew Wu's sandbox identity must produce zero real, externally-visible
+  // The sandbox identity must produce zero real, externally-visible
   // effects (see the sandbox guard above) -- a real Slack post is exactly
-  // that, so it's skipped here the same way his writes are faked elsewhere.
+  // that, so it's skipped here the same way its writes are faked elsewhere.
   if (isSandboxActor()) return;
   const payload = {
     actor: actor,
@@ -4457,6 +4752,10 @@ async function init() {
   wireReportsControls();
   wireOverviewControls();
   wireIdentityGate();
+  // Show Admin plus "Loading names" at once, then ask the roster who is on it
+  // (never blocks the gate or the main data load below: a failure just leaves
+  // Admin plus the "Roster unavailable" notice, see loadIdentityCards).
+  loadIdentityCards();
   wireShiftReportModal();
   // Gate is visible by default in the HTML (no page-load flash of an
   // editable dashboard) — this just syncs the "Acting as" header UI (name

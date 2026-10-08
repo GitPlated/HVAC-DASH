@@ -12,47 +12,15 @@
 <div class="identity-gate" id="identity-gate" role="dialog" aria-modal="true" aria-label="Select who you are">
   <div class="identity-gate-inner">
     <h1 class="identity-gate-title">Who's on shift?</h1>
-    <p class="identity-gate-sub">Pick your name so your checks and updates are attributed to you. This resets every time the page loads. Admin is view-only. Andrew Wu is a sandbox — full access, but nothing he does is saved.</p>
-    <div class="identity-gate-grid">
-      <button type="button" class="identity-card identity-theme-brett" data-identity="brett">
-        <span class="identity-card-swatch"></span>
-        <span class="identity-card-name">Brett Stone</span>
-      </button>
-      <button type="button" class="identity-card identity-theme-jacolby" data-identity="jacolby">
-        <span class="identity-card-swatch"></span>
-        <span class="identity-card-name">Jacolby Moffett</span>
-      </button>
-      <button type="button" class="identity-card identity-theme-john" data-identity="john">
-        <span class="identity-card-swatch"></span>
-        <span class="identity-card-name">John Danhoff</span>
-      </button>
-      <button type="button" class="identity-card identity-theme-michael" data-identity="michael">
-        <span class="identity-card-swatch"></span>
-        <span class="identity-card-name">Michael Petersen</span>
-      </button>
-      <button type="button" class="identity-card identity-theme-david" data-identity="david">
-        <span class="identity-card-swatch"></span>
-        <span class="identity-card-name">David Haney</span>
-      </button>
-      <button type="button" class="identity-card identity-theme-ronald" data-identity="ronald">
-        <span class="identity-card-swatch"></span>
-        <span class="identity-card-name">Ronald Vogel</span>
-      </button>
-      <button type="button" class="identity-card identity-theme-wilberth" data-identity="wilberth">
-        <span class="identity-card-swatch"></span>
-        <span class="identity-card-name">Wilberth Carrizal</span>
-      </button>
-      <button type="button" class="identity-card identity-theme-andrew" data-identity="andrew">
-        <span class="identity-card-swatch"></span>
-        <span class="identity-card-name">Andrew Wu</span>
-        <span class="identity-card-badge">Sandbox</span>
-      </button>
-      <button type="button" class="identity-card identity-card-admin" data-identity="admin">
-        <span class="identity-card-swatch"></span>
-        <span class="identity-card-name">Admin</span>
-        <span class="identity-card-badge">View only</span>
-      </button>
+    <p class="identity-gate-sub">Pick your name so your checks and updates are attributed to you. This resets every time the page loads. Admin is view-only. A Sandbox card has full access, but nothing done on it is saved.</p>
+    <!-- Notice while the names load, or if the roster could not be reached.
+         The cards themselves are built by js/app.js from the roster (the
+         hvac_dash_identities RPC); no name is written in this file. -->
+    <div class="identity-roster-notice" id="identity-roster-notice" role="status" aria-live="polite">
+      <span id="identity-roster-notice-text">Loading names&hellip;</span>
+      <button type="button" class="btn" id="identity-roster-retry" hidden>Try again</button>
     </div>
+    <div class="identity-gate-grid" id="identity-gate-grid"></div>
 
     <!-- Shared password-entry form for any PROTECTED named card (see
          wireIdentityGate/openIdentityPasswordPrompt in js/app.js). Lives

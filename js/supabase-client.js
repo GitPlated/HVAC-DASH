@@ -261,6 +261,46 @@
     return { finding: findingRows && findingRows[0], update: updateRows && updateRows[0] };
   }
 
+  // ------------------------------------------------- roster identity cards
+  // Who gets an identity card on this dashboard comes from the network roster,
+  // never from this repo: hvac_dash_identities(p_site) is a SECURITY DEFINER RPC
+  // (anon may call it; anon cannot read mm_roster itself) that returns the
+  // rows of that site's roster flagged hvac_dash, active, with an email, as
+  // { name, email, needs_login }. email is only returned when needs_login is
+  // true (the person has an MM Dashboard role, so their card opens the real
+  // sign-in). This dashboard is the Aurora one, roster site IL01.
+  //
+  // Contract: resolves with the array of rows; REJECTS on any failure (RPC
+  // missing, error, malformed answer, or no answer within
+  // IDENTITY_CARDS_TIMEOUT_MS), like everything else in this file. js/app.js
+  // turns a rejection into "Roster unavailable" with Admin only: there is
+  // deliberately no cached or hardcoded fallback list.
+  const HVAC_DASH_SITE = "IL01";
+  const IDENTITY_CARDS_TIMEOUT_MS = 8000;
+  const IDENTITY_CARDS_TIMED_OUT = {};
+
+  async function listHvacIdentities() {
+    const failure = initFailure();
+    if (failure) return failure;
+
+    let timer;
+    try {
+      const timedOut = new Promise(function (resolve) {
+        timer = setTimeout(function () { resolve(IDENTITY_CARDS_TIMED_OUT); }, IDENTITY_CARDS_TIMEOUT_MS);
+      });
+      const answer = await Promise.race([client.rpc("hvac_dash_identities", { p_site: HVAC_DASH_SITE }), timedOut]);
+      if (answer === IDENTITY_CARDS_TIMED_OUT) {
+        throw new Error("hvac_dash_identities timed out after " + IDENTITY_CARDS_TIMEOUT_MS + " ms");
+      }
+      const { data, error } = answer;
+      if (error) throw error;
+      if (!Array.isArray(data)) throw new Error("hvac_dash_identities returned an unexpected response");
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // ------------------------------------------------------ password protection
   // Thin wrappers over the 5 RPC functions defined in supabase/schema.sql
   // (hvac_aurora_list_protected_user_names / hvac_aurora_verify_user_password /
@@ -523,6 +563,7 @@
     loadFindingUpdates: loadFindingUpdates,
     createFinding: createFinding,
     addFindingUpdate: addFindingUpdate,
+    listHvacIdentities: listHvacIdentities,
     listProtectedUserNames: listProtectedUserNames,
     verifyUserPassword: verifyUserPassword,
     verifyMasterPassword: verifyMasterPassword,

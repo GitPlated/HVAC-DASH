@@ -67,31 +67,73 @@ update history.
 
 ## Who's on shift
 
-On every page load, a gate asks who's using the dashboard: **Brett Stone**,
-**Jacolby Moffett**, **John Danhoff**, **Michael Petersen**, **David Haney**,
-**Ronald Vogel**, **Wilberth Carrizal** (each with
-their own accent color theme, applied to the header/tabs/buttons while
-they're active), or **Admin** (view-only — every edit control is hidden).
+On every page load, a gate asks who's using the dashboard. The cards are the
+people on the **network roster**, not a list in this repo: no roster person's name is written
+anywhere in the code. Each person gets their own accent color (computed
+from a hash of their card and nudged apart from the other cards' colors, applied to the header/tabs/buttons while
+they're active). **Admin** (view-only — every edit control is hidden) is app
+config, not a person. A **Sandbox** card (full access, nothing it does is
+saved) is the one deliberate exception that is not on the roster.
 It resets every time the page loads — nobody inherits the last person's
 identity on a shared device.
+
+### How the cards work
+
+In Network Roster, a row gets an Aurora identity card when it is **IL01**,
+has **HVAC dashboard card** switched on (the `mm_roster.hvac_dash` column),
+is **active**, and has an **email**. Everything follows from that, with no
+code edit, no SQL and no CSV step:
+
+- **A person leaves, or their seat is marked open** (email cleared): their
+  card disappears by itself (the flag is also cleared by a trigger when the
+  seat is vacated, so whoever fills it next does not inherit it).
+- **A new person is flagged** in Network Roster: their card appears by itself.
+- A person **with an MM Dashboard role** gets a card that opens the real
+  MM Dashboard sign-in (password, the roster-active check below, then MFA)
+  using the email the roster holds. A flagged person **without a role** gets
+  an attribution-only card, exactly like the lightweight cards before.
+- The page asks the roster on load and again on every **Switch**, so a card
+  for someone who left mid-shift cannot be picked after the next Switch.
+
+The page gets the list from one narrow database function,
+`hvac_dash_identities('IL01')`, which returns `{ name, email, needs_login }`
+and only returns an email for people who need to sign in (the page cannot read
+the roster table itself). **There is no hardcoded fallback list.** If the
+function is missing, errors, stalls (8 seconds) or returns nothing usable, the
+gate says "Roster unavailable - reload or ask a manager" and only the Admin
+(view-only) card works, so the floor can still look at the dashboard but
+nobody can record anything without a roster identity.
+
+Names stamped on past checks, findings and updates are historical records and
+are not rewritten when a roster name changes.
+
+**Deploy order.** The database function must exist before this version of the
+page goes live (an older page does not call it, but this one shows Admin only
+until it does). So: 1) the owner runs the SQL that adds `mm_roster.hvac_dash`,
+the trigger and `hvac_dash_identities`, 2) checks it (the site's flagged people
+come back, an anon call works, a direct anon read of `mm_roster` still does
+not), 3) flags the Aurora people in Network Roster, 4) only then is this page
+pushed. Rolling back is a revert of the page; the SQL is additive.
+
+### Passwords and the roster check
 
 Every checklist change and finding update is signed with whoever was
 selected at the time, shown in the Daily Log and Findings tabs. Rows from
 before this feature existed show "Unknown."
 
-A named user can optionally be password-protected — a locked card prompts
-for that person's password before letting you select them. Passwords are
-managed from the "Manage passwords" link on the gate, itself gated behind
-a separate master password. Passwords are bcrypt-hashed and verified
-entirely inside Postgres functions (see `supabase/schema.sql`) — a hash
-never reaches the browser, only a true/false answer — so this is real
-protection against casual impersonation, not just a UI nicety. It's still
-not full authentication: there's no login-attempt throttling, so it won't
-stop someone determined to script repeated guesses against it. Reasonable
-for a small trusted team; know that limit going in.
+An attribution-only card can optionally be password-protected — a locked card
+prompts for that person's password before letting you select them. Passwords
+are keyed by the person's display name and managed from the "Manage passwords"
+link on the gate, itself gated behind a separate master password. Passwords
+are bcrypt-hashed and verified entirely inside Postgres functions (see
+`supabase/schema.sql`) — a hash never reaches the browser, only a true/false
+answer — so this is real protection against casual impersonation, not just a
+UI nicety. It's still not full authentication: there's no login-attempt
+throttling, so it won't stop someone determined to script repeated guesses
+against it. Reasonable for a small trusted team; know that limit going in.
 
-The four cards that sign in with a real MM Dashboard account (Michael,
-David, Ronald, Wilberth) also get a roster check: right after the password
+The cards that sign in with a real MM Dashboard account also get a roster
+check: right after the password
 passes, and before any MFA prompt, the page asks the database whether that
 account's email is still on an **active** `mm_roster` row that has an MM
 Dashboard Role (the same test Sync Login Access uses, so clearing someone's
@@ -103,13 +145,13 @@ response, or the migration not run yet) the sign-in goes ahead and a warning
 is logged to the console, so the shop floor is never locked out by an outage
 or a deploy-order slip. Cancelling, or picking another card, while a sign-in
 is still in progress abandons it instead of letting it finish and grant the
-card. Andrew Wu's sandbox account is exempt because it is
+card. The Sandbox account is exempt because it is
 deliberately kept off the roster. Unlike `supabase/schema.sql`,
 [`supabase/2026-10-07_hvac_aurora_roster_active_check.sql`](supabase/2026-10-07_hvac_aurora_roster_active_check.sql)
 is **not** a historical record: it is a live migration that has to be run by
 hand in MM_Dashboard's Supabase project (preflight query first; the same file
-has the one-line `drop function` that turns the check back off). Brett,
-Jacolby and John, and Goodyear's cards, are not tied to the roster.
+has the one-line `drop function` that turns the check back off). Goodyear is a
+separate deployment (`MM_Dashboard/hvac-goodyear/`) and is not covered here.
 
 ## End of Shift Report
 
